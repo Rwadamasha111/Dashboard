@@ -92,7 +92,7 @@ container_style = {
     "padding": "15px",
     "box-shadow": "0px 8px 20px rgba(0, 0, 0, 0.3)",
     "width": "150%",
-    "max-width": "1800px",
+    "max-width": "2000px",
     "margin": "0 auto",
 }
 background_style = {
@@ -118,7 +118,7 @@ button_style_city = {
 button_dropouts = {
     "width": "30%",
     "height": "60px",
-    "margin": "-50px 0px 0px 1100px",
+    "margin": "-50px 0px 0px 1300px",
     "background-color": 'black',
     "border": "2px solid white",
     "display": "block",
@@ -127,10 +127,22 @@ button_dropouts = {
     "borderRadius": "50px",    
 }
 
-button_style15 = {
-    "width": "120%",
+button_clear = {
+    "width": "30%",
     "height": "60px",
-    "margin": "20px",
+    "margin": "-60px 0px 0px 1800px",
+    "background-color": 'white',
+    "border": "2px solid white",
+    "display": "block",
+    "font-weight": "bold",
+    "color": "red",
+    "borderRadius": "50px",    
+}
+
+button_style15 = {
+    "width": "150%",
+    "height": "60px",
+    "margin": "30px -5px",
     "background-color": 'white',
     "border": "2px solid white",
     "display": "block",
@@ -138,17 +150,7 @@ button_style15 = {
     "color": "rgb(255,51,153)",
     "borderRadius": "50px",   
 }
-button_polygon = {
-    "width": "15%",
-    "height": "60px",
-    "margin": "-50px 0px 0px 850px",
-    "background-color": 'blue',
-    "border": "2px solid white",
-    "display": "block",
-    "font-weight": "bold",
-    "color": "white",     
-    "borderRadius": "50px",  
-}
+
 font_style = {
     "color": "white",
     "size": "25px",
@@ -183,38 +185,16 @@ def convert_to_minutes(duration):
         parts = list(map(int, duration.split(':')))
         if len(parts) == 2:  # mm:ss format
             minutes, seconds = parts
-            total_seconds = minutes * 60 + seconds
+            total_minutes = round(minutes + seconds / 60,2)
         elif len(parts) == 3:  # h:mm:ss format
             hours, minutes, seconds = parts
-            total_seconds = hours * 3600 + minutes * 60 + seconds
+            total_minutes = round(hours * 60 + minutes + seconds / 60,2)
         else:
             return None  # Invalid format
-        return total_seconds  # Convert total seconds to minutes
+        return total_minutes  # Convert total seconds to minutes
     except (ValueError, AttributeError):
         return None  # Handle invalid inputs
 
-def calculate_duration(row):
-    try:
-        def parse_time(time_str):
-            # Check if the time includes hours
-            time_parts = list(map(int, time_str.split(':')))
-            if len(time_parts) == 3:  # h:mm:ss
-                h, m, s = time_parts
-            elif len(time_parts) == 2:  # mm:ss
-                h, m, s = 0, time_parts[0], time_parts[1]
-            else:
-                raise ValueError("Invalid time format")
-            return h * 3600 + m * 60 + s
-        
-        # Parse Start Time
-        start_seconds = parse_time(row['Start Time'])
-        # Parse Finish Time
-        finish_seconds = parse_time(row['Finish Time'])
-        # Calculate Duration
-        return finish_seconds - start_seconds
-    except Exception as e:
-        print(f"Error parsing row: {e}")
-        return None
 
 
 def apply_all_filters2(
@@ -518,6 +498,9 @@ def tab_layout():
             dcc.Store('polygon_drop_active', data=False),
             dcc.Store(id='polygon-coords-store', data=None),
             dcc.Store(id='reset_button_clicked', data=False),
+            dcc.Store(id='load_button_clicked', data=False),
+            dcc.Store(id='filter_comp_store', data=None),
+            
 
             dbc.Container(
                 style=container_style,
@@ -576,7 +559,7 @@ def tab_layout():
                                     width=4
                                 )  
                             ])
-                        ], width=7),                 
+                        ], width=6),                 
                         
                         dbc.Col([
                             dbc.Row([
@@ -597,7 +580,7 @@ def tab_layout():
                                             dbc.Col(dbc.Button("Update DB & Reset Filters", id='update', color='primary', n_clicks=0, style=button_style15), width="auto"),
                                         ]),
                                     ], style={"marginBottom": "30px"}),
-                                ], width=6),
+                                ], width=4),
 
                                 dbc.Col([
                                     html.Div([
@@ -606,9 +589,11 @@ def tab_layout():
                                         dash_table.DataTable(
                                             id='filter_comp',
                                             columns=[
-                                                {"name": "Filter", "id": "Filter"},
+                                                {"name": "Filters", "id": "Filters"},
+                                                {"name": "Values", "id": "fvalue"},
                                                 {"name": "City", "id": "City"},
-                                                {"name": "Percentage", "id": "Percentage"},
+                                                {"name": "%", "id": "Percentage"},
+                                                
                                             ],
                                             data=[],
                                             sort_action="native",
@@ -619,7 +604,7 @@ def tab_layout():
                                                 'textAlign': 'center',
                                                 'width': '30px',
                                                 'maxWidth': '30px',
-                                                'whiteSpace': 'nowrap',
+                                                'whiteSpace': 'wrap',
                                                 'overflow': 'hidden',
                                                 'textOverflow': 'ellipsis',
                                             },
@@ -631,9 +616,9 @@ def tab_layout():
                                             style_data_conditional=[]
                                         ),
                                     ]),  
-                                ], width=6),
+                                ], width=8),
                             ])
-                        ], width=5),
+                        ], width=6),
                     ]),
                     
                     html.H1(
@@ -656,21 +641,31 @@ def tab_layout():
                             style=button_dropouts
                         ),
                         width=4
+                    ), 
+                    dbc.Col(
+                        dbc.Button(
+                            "Clear Filters Table",
+                            id='clear_table',
+                            color='primary',
+                            n_clicks=0,
+                            style=button_clear
+                        ),
+                        width=4
                     ),                      
                     html.Br(),
-                    html.H4("Filter by Video Duration (seconds):", className='mb-1', style={'textAlign': 'left', 'color': 'rgb(255,51,153)'}),
+                    html.H4("Filter by Video Duration (minutes):", className='mb-1', style={'textAlign': 'left', 'color': 'rgb(255,51,153)'}),
                     dbc.Row([
                         dbc.Col(
                             dcc.RangeSlider(
                                 id='duration-slider',
                                 min=0,
                                 max=100,
-                                step=0.1,
+                                step=0.05,
                                 value=[0, 100],
                                 updatemode='mouseup',
                                 marks={},
                                 tooltip={"always_visible": True, "placement": "bottom"}
-                            ), width=8
+                            ), width=5
                         )
                     ], justify="left"),
                     
@@ -726,95 +721,177 @@ def tab_layout():
 
 
     
+# Helper to build a single-row (or no rows) for the filter-comparison table
+def compute_filter_comp(
+    filtered_df,
+    original_total,
+    city_name,
+    selected_terrain,
+    selected_occluded,
+    selected_VQ,
+    selected_tilt,
+    selected_distance,
+    pie_clickData,
+    bar_weather_clickData,
+    bar_clickData,
+    pie2_clickData,
+):
+    """
+    Returns a list containing exactly one row (dict) for the filter table
+    if any filter is active. Otherwise, returns an empty list.
+    """
+
+    # Gather all filters in one dict
+    filters_dict = {
+        'Terrain': selected_terrain,
+        'Occluded': selected_occluded,
+        'Video quality': selected_VQ,
+        'Camera tilt': selected_tilt,
+        'Distance from building': selected_distance,
+        'Time': pie_clickData,
+        'Weather': bar_weather_clickData,
+        'Logos': bar_clickData,
+        'Source': pie2_clickData
+    }
+
+    # Build active filters with different conditions:
+    # For non-figure filters, we skip the filter if its value is "All".
+    # For figure filters (the ones with clickData), we only include if the value is not None.
+    active_filters = {}
+    for key, value in filters_dict.items():
+        if key in ['Time', 'Weather', 'Logos', 'Source']:
+            if value is not None:
+                active_filters[key] = value
+        else:
+            if value != 'All':
+                active_filters[key] = value
+
+    # If no active filters are applied, return an empty list.
+    if not active_filters:
+        return []
+
+    # Calculate the percentage of remaining records
+    filtered_count = len(filtered_df)
+    percentage = (filtered_count / original_total * 100) if original_total else 0
+
+    # Build a single row that aggregates all active filters
+    row = {
+        "City": city_name,
+        "Filters": ", ".join(active_filters.keys()),       # e.g. "Terrain, Occluded"
+        "fvalue": ", ".join(str(v) for v in active_filters.values()),  # e.g. "highly, yes"
+        "Percentage": f"{percentage:.2f}%"
+    }
+    return [row]
+
+
+
 @app.callback(
-    [Output('map', 'center'),
-     Output('map-layer', 'children'),
-     Output('polygon-layer', 'children'),
-     Output('Terrain', 'options'),
-     Output('Terrain', 'value'),
-     Output('Occlusion', 'options'),
-     Output('Occlusion', 'value'),
-     Output('VQ', 'options'),
-     Output('VQ', 'value'),
-     Output('Camera_Tilt', 'options'),
-     Output('Camera_Tilt', 'value'),
-     Output('Distance_Building', 'options'),
-     Output('Distance_Building', 'value'),
-     Output('record-count', 'children'),
-     Output('drop-pre', 'children'),
-     Output('duration-slider', 'min'),
-     Output('duration-slider', 'max'),
-     Output('duration-slider', 'value'),
-     Output('pie-chart', 'figure'),
-     Output('bar-chart-weather', 'figure'),
-     Output('bar-plot-logos', 'figure'),
-     Output('source-pie', 'figure'),
-     Output('pie-chart', 'clickData'),
-     Output('bar-chart-weather', 'clickData'),
-     Output('bar-plot-logos', 'clickData'),
-     Output('source-pie', 'clickData'),
-     Output('city_name','children'),
-     Output('table', 'data'),
-     Output('table', 'columns'),
-     Output('current-city-data','data'),
-     Output('reset_button_clicked','data'),
-     Output('graphs-container', 'style'),
-     Output('polygon_drop_active','data'),
-     Output('polygon-coords-store', 'data')
+    [
+        Output('map', 'center'),
+        Output('map-layer', 'children'),
+        Output('polygon-layer', 'children'),
+        Output('Terrain', 'options'),
+        Output('Terrain', 'value'),
+        Output('Occlusion', 'options'),
+        Output('Occlusion', 'value'),
+        Output('VQ', 'options'),
+        Output('VQ', 'value'),
+        Output('Camera_Tilt', 'options'),
+        Output('Camera_Tilt', 'value'),
+        Output('Distance_Building', 'options'),
+        Output('Distance_Building', 'value'),
+        Output('record-count', 'children'),
+        Output('drop-pre', 'children'),
+        Output('duration-slider', 'min'),
+        Output('duration-slider', 'max'),
+        Output('duration-slider', 'value'),
+        Output('pie-chart', 'figure'),
+        Output('bar-chart-weather', 'figure'),
+        Output('bar-plot-logos', 'figure'),
+        Output('source-pie', 'figure'),
+        Output('pie-chart', 'clickData'),
+        Output('bar-chart-weather', 'clickData'),
+        Output('bar-plot-logos', 'clickData'),
+        Output('source-pie', 'clickData'),
+        Output('city_name','children'),
+        Output('table', 'data'),
+        Output('table', 'columns'),
+        Output('current-city-data','data'),
+        Output('reset_button_clicked','data'),
+        Output('graphs-container', 'style'),
+        Output('polygon_drop_active','data'),
+        Output('polygon-coords-store', 'data'),
+        Output('filter_comp', 'data'),            # <-- The table showing filter comparisons
+        Output('filter_comp_store','data'),       # <-- Store for filter comparison
+        Output('load_button_clicked','data')
     ],
-    [Input('city-filter-btn', 'n_clicks'),
-     Input('city_filter', "value"),
-     Input('update','n_clicks'),
-     Input('pie-chart', 'clickData'),
-     Input('bar-chart-weather', 'clickData'),
-     Input('bar-plot-logos', 'clickData'),
-     Input('source-pie','clickData'),
-     Input('duration-slider', 'value'),
-     Input('Terrain', 'value'),
-     Input('Occlusion', 'value'),
-     Input('VQ', 'value'),
-     Input('Camera_Tilt', 'value'),
-     Input('Distance_Building', 'value'),
-     Input('dropouts','n_clicks')],
-    [State('current-city-data','data'),
-     State('reset_button_clicked','data'),
-     State('polygon_drop_active','data'),
-     State('polygon-coords-store', 'data')]
+    [
+        Input('city-filter-btn', 'n_clicks'),
+        Input('city_filter', "value"),
+        Input('update','n_clicks'),
+        Input('pie-chart', 'clickData'),
+        Input('bar-chart-weather', 'clickData'),
+        Input('bar-plot-logos', 'clickData'),
+        Input('source-pie','clickData'),
+        Input('duration-slider', 'value'),
+        Input('Terrain', 'value'),
+        Input('Occlusion', 'value'),
+        Input('VQ', 'value'),
+        Input('Camera_Tilt', 'value'),
+        Input('Distance_Building', 'value'),
+        Input('dropouts','n_clicks'),
+        Input('clear_table','n_clicks')
+    ],
+    [
+        State('current-city-data','data'),
+        State('reset_button_clicked','data'),
+        State('polygon_drop_active','data'),
+        State('polygon-coords-store', 'data'),
+        State('filter_comp_store','data'),
+        State('load_button_clicked','data')
+    ]
 )
-def load_dashboards(load_btn, selected_city, update, pie_clickData, 
-                    bar_weather_clickData, bar_clickData, pie2_clickData, duration_range,
-                    selected_terrain, selected_occluded, selected_VQ, selected_tilt, selected_distance,
-                    dropouts_n_clicks,
-                    current_data, reset_clicked, polygon_active, polygon_coords_store):
+def load_dashboards(load_btn, selected_city, update, pie_clickData, bar_weather_clickData,  
+bar_clickData, pie2_clickData, duration_range, selected_terrain,  
+selected_occluded, selected_VQ, selected_tilt, selected_distance,  
+dropouts_n_clicks,clear_button, current_data, reset_clicked, polygon_active,  
+polygon_coords_store, filter_comp_store, load_clicked
+):
+
+    global original_total  # We'll use this to store the total # of records after city load
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'] if ctx.triggered else None
 
-    # If the city dropdown changes without a button click, do nothing.
+    # If city dropdown changes without a button click, do nothing
     if triggered_id and triggered_id.startswith('city_filter'):
-        return (dash.no_update,) * 34
+        return (dash.no_update,) * 37
 
-    # Reset chart clickData if they weren’t the trigger.
+    # Reset chart clickData if they weren’t the trigger
     if triggered_id != 'pie-chart.clickData':
         pie_clickData = None
     if triggered_id != 'bar-chart-weather.clickData':
-        bar_weather_clickData = None    
+        bar_weather_clickData = None
     if triggered_id != 'bar-plot-logos.clickData':
         bar_clickData = None
     if triggered_id != 'source-pie.clickData':
         pie2_clickData = None
-
-    # Helper: Build dropdown options for a given column.
+        
+    def extract_label(clickData, key='label'):
+        if clickData and 'points' in clickData and clickData['points']:
+            return clickData['points'][0].get(key, 'All')
+        return 'All'
+    
+    # Helper: Build dropdown options for a given column
     def build_options(df, col_name):
         if col_name in df.columns:
             unique_vals = sorted([v for v in df[col_name].unique() if pd.notnull(v)])
             return [{'label': 'All', 'value': 'All'}] + [{'label': str(val), 'value': str(val)} for val in unique_vals]
         return []
 
-    # Helper: Load selected cities’ sheet IDs, ranges, and polygon IDs.
+    # Helper: Load city Sheets & polygons
     def load_selected_cities(selected_cities):
         if not selected_cities:
             return [], [], []
-        # If only one city is selected, wrap it in a list.
         if isinstance(selected_cities, str):
             selected_cities = [selected_cities]
         filtered_cities = cities[cities['City Name'].isin(selected_cities)]
@@ -823,15 +900,20 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
         polygon_ids = filtered_cities['PolygonID'].tolist()
         return sheet_ids, sheet_ranges, polygon_ids
 
-
-    # --- Branch 1: Load Button (city-filter-btn) ---
+    # -------------- Branch 1: Load Button --------------
     if triggered_id == 'city-filter-btn.n_clicks':
         reset_clicked = False
+        load_clicked = True
+
+        # Clear filter-comp data on new city load
+        filter_comp_data = filter_comp_store
+
         sheet_ids, sheet_ranges, polygon_ids = load_selected_cities(selected_city)
         combined_dfs = []
-        polygons_list = []  # Will store each city’s polygon coordinates list.
+        polygons_list = []
+
         for sid, srange, pid in zip(sheet_ids, sheet_ranges, polygon_ids):
-            # Load polygon data from Drive.
+            # Load polygon data
             request = drive_service.files().get_media(fileId=pid)
             polygon_bytes = request.execute()
             try:
@@ -843,15 +925,17 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                 polygon_data = []
             poly_coords = [tuple(coord) for coord in polygon_data]
             polygons_list.append(poly_coords)
-            # Load the city data from Sheets.
+
+            # Load city data from Sheets
             df_city = load_city(sid, srange)
             combined_dfs.append(df_city)
+
         if combined_dfs:
             df_combined = pd.concat(combined_dfs, ignore_index=True)
         else:
             df_combined = pd.DataFrame()
 
-        # Build a polygon layer with one polygon per city.
+        # Build polygon layer
         polygon_layers = []
         for poly_coords in polygons_list:
             if poly_coords:
@@ -866,7 +950,7 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                 )
         polygon_layer = dl.LayerGroup(children=polygon_layers)
 
-        # Process the combined DataFrame (ensure valid Coordinates, extract lat/lon).
+        # Create markers
         if 'Coordinates' in df_combined.columns:
             df_combined = df_combined[df_combined['Coordinates'].str.contains(',', na=False)]
             df_combined[['Latitude', 'Longitude']] = df_combined['Coordinates'].str.split(',', expand=True)
@@ -876,7 +960,7 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
         else:
             city_markers = []
 
-        # Helper: Check if a point is inside any of the loaded polygons.
+        # Check inside polygon
         def is_inside_any(lat, lon, polygons):
             pt = Point(lat, lon)
             for poly in polygons:
@@ -891,11 +975,13 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
         )
         pre_out_city = round(((len(df_combined) - count_within) / len(df_combined) * 100), 2) if len(df_combined) > 0 else 0
 
+        # Duration
         if 'Duration' not in df_combined.columns:
             df_combined['Duration'] = df_combined['Finish Time'].apply(convert_to_minutes) - df_combined['Start Time'].apply(convert_to_minutes)
         df_combined.dropna(subset=['Latitude', 'Longitude'], inplace=True)
-        min_dur = df_combined['Duration'].min() if not df_combined['Duration'].empty else 0
-        max_dur = df_combined['Duration'].max() if not df_combined['Duration'].empty else 100
+        min_dur = round(df_combined['Duration'].min(),2) if not df_combined['Duration'].empty else 0
+        max_dur = round(df_combined['Duration'].max(),2) if not df_combined['Duration'].empty else 100
+
         record_count = f"Total Records: {len(df_combined)}"
         drop_count = f"{pre_out_city} % out of Polygon"
         if city_markers:
@@ -904,56 +990,69 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
         else:
             map_center = (41.9028, 12.4964)
 
-        # Generate charts based on the combined DataFrame.
+        # Generate charts
         city_logos_bar = generate_interactive_bar_plot_2_city(df_combined)
         city_time_of_day_pie = generate_interactive_pie_chart_city(df_combined)
         city_weather_bar = generate_interactive_bar_chart_weather_city(df_combined)
         city_source_pie = generate_interactive_pie_chart_source(df_combined)
 
         title = f"Airis-Labs: Geo-Location Analysis - {', '.join(selected_city) if isinstance(selected_city, list) else selected_city}"
+
+        # Store original total for subsequent filter-comparison
+        original_total = len(df_combined)
+
+        # Return everything
         return (
             map_center,                                # map center
             city_markers,                              # map-layer children
             polygon_layer,                             # polygon-layer children
             build_options(df_combined, 'Terrain'),     # Terrain dropdown options
             'All',                                     # Terrain value
-            build_options(df_combined, 'Occluded'),      # Occlusion dropdown options
+            build_options(df_combined, 'Occluded'),    # Occlusion dropdown options
             'All',                                     # Occlusion value
-            build_options(df_combined, 'Video quality'), # VQ dropdown options
-            'All',                                     # VQ value
-            build_options(df_combined, 'Camera tilt'),   # Camera_Tilt dropdown options
-            'All',                                     # Camera_Tilt value
-            build_options(df_combined, 'Distance from building'),  # Distance_Building options
-            'All',                                     # Distance_Building value
-            record_count,                              # record-count text
-            drop_count,                                # drop-pre text
-            min_dur,                                   # duration-slider min
-            max_dur,                                   # duration-slider max
-            [min_dur, max_dur],                        # duration-slider current value
-            city_time_of_day_pie,                      # pie-chart figure
-            city_weather_bar,                          # bar-chart-weather figure
-            city_logos_bar,                            # bar-plot-logos figure
-            city_source_pie,                           # source-pie figure
-            dash.no_update,                           # pie-chart clickData (reset)
-            dash.no_update,                           # bar-chart-weather clickData (reset)
-            dash.no_update,                           # bar-plot-logos clickData (reset)
-            dash.no_update,                           # source-pie clickData (reset)
-            title,                                     # city_name text
-            df_combined.to_dict('records'),            # table data
-            [{'name': col, 'id': col} for col in df_combined.columns],  # table columns
-            df_combined.to_dict('records'),            # current-city-data store
-            reset_clicked,                             # reset_button_clicked store
-            {"display": "block"},                      # graphs-container style
-            polygons_list,                             # polygon_drop_active data (list of polygons)
-            polygons_list                              # polygon-coords-store data (list of polygons)
+            build_options(df_combined, 'Video quality'),
+            'All',
+            build_options(df_combined, 'Camera tilt'),
+            'All',
+            build_options(df_combined, 'Distance from building'),
+            'All',
+            record_count,
+            drop_count,
+            min_dur,
+            max_dur,
+            [min_dur, max_dur],
+            city_time_of_day_pie,
+            city_weather_bar,
+            city_logos_bar,
+            city_source_pie,
+            dash.no_update,  # pie-chart clickData
+            dash.no_update,  # bar-chart-weather clickData
+            dash.no_update,  # bar-plot-logos clickData
+            dash.no_update,  # source-pie clickData
+            title,
+            df_combined.to_dict('records'),
+            [{'name': col, 'id': col} for col in df_combined.columns],
+            df_combined.to_dict('records'),
+            reset_clicked,
+            {"display": "block"},
+            polygons_list,
+            polygons_list,
+            dash.no_update,   # filter_comp => empty on load
+            filter_comp_data,   # filter_comp_store => empty on load
+            load_clicked
         )
-    
-    # --- Branch 2: Update & Reset Button (update.n_clicks) ---
+
+    # -------------- Branch 2: Update & Reset Button --------------
     elif triggered_id == 'update.n_clicks':
         reset_clicked = True
+        load_clicked = False
+        
+
+        # Reload city data
         sheet_ids, sheet_ranges, polygon_ids = load_selected_cities(selected_city)
         combined_dfs = []
         polygons_list = []
+
         for sid, srange, pid in zip(sheet_ids, sheet_ranges, polygon_ids):
             request = drive_service.files().get_media(fileId=pid)
             polygon_bytes = request.execute()
@@ -968,6 +1067,7 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
             polygons_list.append(poly_coords)
             df_city = load_city(sid, srange)
             combined_dfs.append(df_city)
+
         if combined_dfs:
             df_updated = pd.concat(combined_dfs, ignore_index=True)
         else:
@@ -1008,15 +1108,24 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
             map_center = random_marker.position
         else:
             map_center = (41.9028, 12.4964)
+
         city_logos_bar = generate_interactive_bar_plot_2_city(df_updated)
         city_time_of_day_pie = generate_interactive_pie_chart_city(df_updated)
         city_weather_bar = generate_interactive_bar_chart_weather_city(df_updated)
         city_source_pie = generate_interactive_pie_chart_source(df_updated)
+
         title = f"Airis-Labs: Geo-Location Analysis - {', '.join(selected_city) if isinstance(selected_city, list) else selected_city}"
+
+        # Now produce a single row for filter-comp if user changed any filters
+        # (But since "update" was clicked, presumably we want to reset everything.)
+        # We'll keep it empty or you can do the compute_filter_comp if you want.
+        # For a strict "reset," we do not compute filters. We'll keep it empty:
+        filter_comp_data = []
+
         return (
             map_center,
             city_markers,
-            dash.no_update,  # Keeping existing polygon layer
+            dash.no_update,  # keep existing polygons
             build_options(df_updated, 'Terrain'),
             'All',
             build_options(df_updated, 'Occluded'),
@@ -1047,13 +1156,19 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
             reset_clicked,
             {"display": "block"},
             polygons_list,
-            polygons_list
+            polygons_list,
+            dash.no_update,  
+            dash.no_update,
+            load_clicked
         )
-    
-    # --- Branch 3: Dropouts Filtering (dropouts.n_clicks) ---
+
+    # -------------- Branch 3: Dropouts Filtering --------------
     elif triggered_id == 'dropouts.n_clicks' and dropouts_n_clicks > 0:
-        df_filtered = pd.DataFrame(current_data)
         polygon_active = True
+        df_filtered = pd.DataFrame(current_data)
+        
+
+        # Apply all filters
         filtered_df = apply_all_filters2(
             df=df_filtered,
             duration_range=duration_range,
@@ -1068,31 +1183,27 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
             bar_2_clickData=bar_clickData,
             polygon_active=polygon_active
         )
+
         if 'Coordinates' in filtered_df.columns:
             filtered_df = filtered_df[filtered_df['Coordinates'].str.contains(',', na=False)]
             temp = filtered_df['Coordinates'].str.split(',', n=1, expand=True)
             filtered_df['Latitude'] = pd.to_numeric(temp[0], errors='coerce')
             filtered_df['Longitude'] = pd.to_numeric(temp[1], errors='coerce')
-            
-        else:
-            city_markers = []
 
-        # Initialize polygons_list from state (list of polygons for each city)
         polygons_list = polygon_coords_store if polygon_coords_store is not None else []
 
-        # Helper: Check if a point is inside any of the loaded polygons.
         def is_inside_any_poly(row):
             pt = Point(row['Latitude'], row['Longitude'])
             return any(Polygon(poly).contains(pt) for poly in polygons_list if poly)
 
-        # Calculate total number of records and how many are inside any polygon.
         total_count = len(filtered_df)
         count_inside = filtered_df.apply(is_inside_any_poly, axis=1).sum()
         dropout_percentage = round(((total_count - count_inside) / total_count * 100), 2) if total_count > 0 else 0
 
-        # Filter the dataframe to only include dropouts (points that are NOT inside any polygon)
+        # Keep only the dropouts (outside polygons)
         filtered_df = filtered_df[~filtered_df.apply(is_inside_any_poly, axis=1)]
         city_markers = create_map_markers(filtered_df)
+
         if 'Duration' not in filtered_df.columns:
             filtered_df['Duration'] = filtered_df['Finish Time'].apply(convert_to_minutes) - filtered_df['Start Time'].apply(convert_to_minutes)
         filtered_df.dropna(subset=['Latitude', 'Longitude'], inplace=True)
@@ -1104,11 +1215,36 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
             map_center = random_marker.position
         else:
             map_center = (41.9028, 12.4964)
+
         city_logos_bar = generate_interactive_bar_plot_2_city(filtered_df)
         city_time_of_day_pie = generate_interactive_pie_chart_city(filtered_df)
         city_weather_bar = generate_interactive_bar_chart_weather_city(filtered_df)
         city_source_pie = generate_interactive_pie_chart_source(filtered_df)
+
         drop_count = f"{dropout_percentage} % out of Polygon" if total_count > 0 else "Nothing to show"
+
+        # Now produce filter_comp row
+        city_label = selected_city if isinstance(selected_city, str) else ", ".join(selected_city)
+        time_pie= extract_label(pie_clickData, 'label')
+        weather_bar = extract_label(bar_weather_clickData, 'y')
+        logos_bar = extract_label(bar_clickData, 'x')
+        source_pie = extract_label(pie2_clickData, 'label')
+        
+        filter_comp_data = compute_filter_comp(
+            filtered_df=filtered_df,
+            original_total=original_total,
+            city_name=city_label,
+            selected_terrain=selected_terrain,
+            selected_occluded=selected_occluded,
+            selected_VQ=selected_VQ,
+            selected_tilt=selected_tilt,
+            selected_distance=selected_distance,
+            pie_clickData = time_pie,
+            bar_weather_clickData=weather_bar,
+            bar_clickData= logos_bar,
+            pie2_clickData= source_pie
+        )
+
         return (
             map_center,
             city_markers,
@@ -1143,19 +1279,67 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
             reset_clicked,
             {"display": "block"},
             polygon_active,
-            dash.no_update
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            load_clicked
         )
 
-    
-    # --- Branch 4: Default Filtering without Load/Update ---
+
+    elif triggered_id == 'clear_table.n_clicks':
+        filter_comp_store =[]
+        filter_comp_data = filter_comp_store
+        return (
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            reset_clicked,
+            dash.no_update,
+            dash.no_update,
+            dash.no_update,
+            filter_comp_data,  # Single row or empty
+            filter_comp_data,
+            load_clicked            
+        )
+
+
+    # -------------- Branch 5: Default Filtering (No explicit button) --------------
     else:
-        reset_clicked = False
+        # Possibly user changed a filter or some default fallback
         df_current = pd.DataFrame(current_data)
         if df_current.empty:
-            # Reload data if necessary.
+            # If we have no data in current_data, attempt to reload
             sheet_ids, sheet_ranges, polygon_ids = load_selected_cities(selected_city)
             combined_dfs = []
             polygons_list = []
+
             for sid, srange, pid in zip(sheet_ids, sheet_ranges, polygon_ids):
                 request = drive_service.files().get_media(fileId=pid)
                 polygon_bytes = request.execute()
@@ -1170,10 +1354,12 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                 polygons_list.append(poly_coords)
                 df_city = load_city(sid, srange)
                 combined_dfs.append(df_city)
+
             if combined_dfs:
                 df_current = pd.concat(combined_dfs, ignore_index=True)
             else:
                 df_current = pd.DataFrame()
+
             polygon_layer = dl.LayerGroup(
                 children=[
                     dl.Polygon(
@@ -1183,32 +1369,34 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                         fillOpacity=0.6,
                     )
                 ]
-            )
+            ) if polygons_list else dl.LayerGroup()
+
             table_columns = [{'name': col, 'id': col} for col in df_current.columns]
             terrain_options = build_options(df_current, 'Terrain')
             occlusion_options = build_options(df_current, 'Occluded')
             vq_options = build_options(df_current, 'Video quality')
             camera_tilt_options = build_options(df_current, 'Camera tilt')
             distance_options = build_options(df_current, 'Distance from building')
+
             df_current = df_current[df_current['Coordinates'].str.contains(',', na=False)]
             temp = df_current['Coordinates'].str.split(',', n=1, expand=True)
             df_current['Latitude'] = pd.to_numeric(temp[0], errors='coerce')
             df_current['Longitude'] = pd.to_numeric(temp[1], errors='coerce')
             city_markers = create_map_markers(df_current)
-            # Use the computed polygons_list here.
-            # If not available, use the stored polygon_coords_store.
-            if 'polygons_list' not in locals() or not polygons_list:
-                polygons_list = polygon_coords_store if polygon_coords_store is not None else []
+
             if polygons_list and len(polygons_list) > 0:
                 city_polygon = Polygon(polygons_list[0])
             else:
                 city_polygon = None
+
             count_within = sum(
                 city_polygon.contains(Point(row['Latitude'], row['Longitude']))
                 for _, row in df_current.iterrows()
                 if pd.notnull(row['Latitude']) and pd.notnull(row['Longitude'])
             ) if city_polygon else 0
+
             pre_out_city = round(((len(df_current) - count_within) / len(df_current) * 100), 2) if len(df_current)>0 else 0
+
             if 'Duration' not in df_current.columns:
                 df_current['Duration'] = df_current['Finish Time'].apply(convert_to_minutes) - df_current['Start Time'].apply(convert_to_minutes)
             df_current.dropna(subset=['Latitude', 'Longitude'], inplace=True)
@@ -1221,11 +1409,34 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                 map_center = random_marker.position
             else:
                 map_center = (41.9028, 12.4964)
+
             title = f"Airis-Labs: Geo-Location Analysis - {', '.join(selected_city) if isinstance(selected_city, list) else selected_city}"
+
             city_logos_bar = generate_interactive_bar_plot_2_city(df_current)
             city_time_of_day_pie = generate_interactive_pie_chart_city(df_current)
             city_weather_bar = generate_interactive_bar_chart_weather_city(df_current)
             city_source_pie = generate_interactive_pie_chart_source(df_current)
+
+            city_label = selected_city if isinstance(selected_city, str) else ", ".join(selected_city)
+            time_pie= extract_label(pie_clickData, 'label')
+            weather_bar = extract_label(bar_weather_clickData, 'x')
+            logos_bar = extract_label(bar_clickData, 'x')
+            source_pie = extract_label(pie2_clickData, 'label')
+            # No filters applied => filter_comp_data = []
+            filter_comp_data = compute_filter_comp(
+                filtered_df=df_filtered,
+                original_total=original_total,
+                city_name=city_label,
+                selected_terrain=selected_terrain,
+                selected_occluded=selected_occluded,
+                selected_VQ=selected_VQ,
+                selected_tilt=selected_tilt,
+                selected_distance=selected_distance,
+                pie_clickData = time_pie,
+                bar_weather_clickData=weather_bar,
+                bar_clickData= logos_bar,
+                pie2_clickData= source_pie)
+
             return (
                 map_center,
                 city_markers,
@@ -1260,13 +1471,15 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                 reset_clicked,
                 {"display": "block"},
                 polygon_active,
-                dash.no_update
+                dash.no_update,
+                filter_comp_data,
+                filter_comp_data,
+                load_clicked
             )
         else:
-            reset_clicked = False
-            df_filtered = pd.DataFrame(current_data)
-            filtered_df = apply_all_filters2(
-                df=df_filtered,
+            # We do have data in current_data => user changed a filter
+            df_filtered = apply_all_filters2(
+                df=df_current,
                 duration_range=duration_range,
                 selected_terrain=selected_terrain,
                 selected_occluded=selected_occluded,
@@ -1279,77 +1492,173 @@ def load_dashboards(load_btn, selected_city, update, pie_clickData,
                 bar_2_clickData=bar_clickData,
                 polygon_active=polygon_active
             )
-            terrain_options = build_options(filtered_df, 'Terrain')
-            occlusion_options = build_options(filtered_df, 'Occluded')
-            vq_options = build_options(filtered_df, 'Video quality')
-            camera_tilt_options = build_options(filtered_df, 'Camera tilt')
-            distance_options = build_options(filtered_df, 'Distance from building')
-            filtered_df = filtered_df[filtered_df['Coordinates'].str.contains(',', na=False)]
-            temp = filtered_df['Coordinates'].str.split(',', n=1, expand=True)
-            filtered_df['Latitude'] = pd.to_numeric(temp[0], errors='coerce')
-            filtered_df['Longitude'] = pd.to_numeric(temp[1], errors='coerce')
-            city_markers = create_map_markers(filtered_df)
-            # Initialize polygons_list from state if not defined.
-            polygons_list = polygon_coords_store if polygon_coords_store is not None else []
+
+            terrain_options = build_options(df_filtered, 'Terrain')
+            occlusion_options = build_options(df_filtered, 'Occluded')
+            vq_options = build_options(df_filtered, 'Video quality')
+            camera_tilt_options = build_options(df_filtered, 'Camera tilt')
+            distance_options = build_options(df_filtered, 'Distance from building')
+
+            df_filtered = df_filtered[df_filtered['Coordinates'].str.contains(',', na=False)]
+            temp = df_filtered['Coordinates'].str.split(',', n=1, expand=True)
+            df_filtered['Latitude'] = pd.to_numeric(temp[0], errors='coerce')
+            df_filtered['Longitude'] = pd.to_numeric(temp[1], errors='coerce')
+            city_markers = create_map_markers(df_filtered)
+
+            polygons_list = polygon_coords_store if polygon_coords_store else []
             if polygons_list and len(polygons_list) > 0:
                 city_polygon = Polygon(polygons_list[0])
             else:
                 city_polygon = None
+
             count_within = sum(
                 city_polygon.contains(Point(row['Latitude'], row['Longitude']))
-                for _, row in filtered_df.iterrows()
+                for _, row in df_filtered.iterrows()
                 if pd.notnull(row['Latitude']) and pd.notnull(row['Longitude'])
             ) if city_polygon else 0
-            pre_out_city = round(((len(filtered_df) - count_within) / len(filtered_df) * 100), 2) if len(filtered_df)>0 else 0
-            if 'Duration' not in filtered_df.columns:
-                filtered_df['Duration'] = filtered_df['Finish Time'].apply(convert_to_minutes) - filtered_df['Start Time'].apply(convert_to_minutes)
-            filtered_df.dropna(subset=['Latitude', 'Longitude'], inplace=True)
-            min_dur = filtered_df['Duration'].min() if not filtered_df['Duration'].empty else 0
-            max_dur = filtered_df['Duration'].max() if not filtered_df['Duration'].empty else 100
-            record_count = f"Total Records: {len(filtered_df)}"
+
+            pre_out_city = round(((len(df_filtered) - count_within) / len(df_filtered) * 100), 2) if len(df_filtered)>0 else 0
+
+            if 'Duration' not in df_filtered.columns:
+                df_filtered['Duration'] = df_filtered['Finish Time'].apply(convert_to_minutes) - df_filtered['Start Time'].apply(convert_to_minutes)
+            df_filtered.dropna(subset=['Latitude', 'Longitude'], inplace=True)
+            min_dur = df_filtered['Duration'].min() if not df_filtered['Duration'].empty else 0
+            max_dur = df_filtered['Duration'].max() if not df_filtered['Duration'].empty else 100
+
+            record_count = f"Total Records: {len(df_filtered)}"
             drop_count = f"{pre_out_city} % out of Polygon"
+
             if city_markers:
                 random_marker = random.choice(city_markers)
                 map_center = random_marker.position
             else:
                 map_center = (41.9028, 12.4964)
+
             title = f"Airis-Labs: Geo-Location Analysis - {', '.join(selected_city) if isinstance(selected_city, list) else selected_city}"
+
+            # Build final charts
+            pie_fig = generate_interactive_pie_chart_city(df_filtered)
+            weather_bar_fig = generate_interactive_bar_chart_weather_city(df_filtered)
+            logos_bar_fig = generate_interactive_bar_plot_2_city(df_filtered)
+            source_pie_fig = generate_interactive_pie_chart_source(df_filtered)
+            
+        
+            # Convert selected_city to a string if it is a list
+            city_label = selected_city if isinstance(selected_city, str) else ", ".join(selected_city)
+            time_pie= extract_label(pie_clickData, 'label')
+            weather_bar = extract_label(bar_weather_clickData, 'y')
+            logos_bar = extract_label(bar_clickData, 'x')
+            source_pie = extract_label(pie2_clickData, 'label')
+            
+            if filter_comp_store is not None:
+                # Check if city_label already exists in filter_comp_store
+                city_entry = next((entry for entry in filter_comp_store if entry.get('City') == city_label), None)
+
+                if city_entry is None:
+                    # City does not exist, add new computed filter data
+                    filter_comp_data = filter_comp_store + compute_filter_comp(
+                        filtered_df=df_filtered,
+                        original_total=original_total,
+                        city_name=city_label,
+                        selected_terrain=selected_terrain,
+                        selected_occluded=selected_occluded,
+                        selected_VQ=selected_VQ,
+                        selected_tilt=selected_tilt,
+                        selected_distance=selected_distance,
+                        pie_clickData = time_pie,
+                        bar_weather_clickData=weather_bar,
+                        bar_clickData= logos_bar,
+                        pie2_clickData= source_pie
+                    )
+                else:
+                    # City exists, check if filters and values match
+                    new_filter_data = compute_filter_comp(
+                        filtered_df=df_filtered,
+                        original_total=original_total,
+                        city_name=city_label,
+                        selected_terrain=selected_terrain,
+                        selected_occluded=selected_occluded,
+                        selected_VQ=selected_VQ,
+                        selected_tilt=selected_tilt,
+                        selected_distance=selected_distance,
+                        pie_clickData = time_pie,
+                        bar_weather_clickData=weather_bar,
+                        bar_clickData= logos_bar,
+                        pie2_clickData= source_pie
+                    )[0]  # Assuming compute_filter_comp returns a list
+
+                    # Check if filters and values match
+                    filters_match = all(
+                        city_entry.get(key) == new_filter_data.get(key)
+                        for key in ["Filters", "fvalue"]
+                    )
+
+                    if not filters_match:
+                        # Update the existing city's filters and values
+                        city_entry.update(new_filter_data)
+                        filter_comp_data = filter_comp_store  # Updated list with modified entry
+                    else:
+                        # If filters and values are the same, do nothing
+                        filter_comp_data = filter_comp_store
+            else:
+                # If filter_comp_store is None, compute fresh data
+                filter_comp_data = compute_filter_comp(
+                    filtered_df=df_filtered,
+                    original_total=original_total,
+                    city_name=city_label,
+                    selected_terrain=selected_terrain,
+                    selected_occluded=selected_occluded,
+                    selected_VQ=selected_VQ,
+                    selected_tilt=selected_tilt,
+                    selected_distance=selected_distance,
+                    pie_clickData = time_pie,
+                    bar_weather_clickData=weather_bar,
+                    bar_clickData= logos_bar,
+                    pie2_clickData= source_pie
+                )
+       
+
             return (
                 map_center,
                 city_markers,
                 dash.no_update,
                 terrain_options,
-                'All',
+                selected_terrain,
                 occlusion_options,
-                'All',
+                selected_occluded,
                 vq_options,
-                'All',
+                selected_VQ,
                 camera_tilt_options,
-                'All',
+                selected_tilt,
                 distance_options,
-                'All',
+                selected_distance,
                 record_count,
                 drop_count,
                 min_dur,
                 max_dur,
                 [min_dur, max_dur],
-                generate_interactive_pie_chart_city(filtered_df),
-                generate_interactive_bar_chart_weather_city(filtered_df),
-                generate_interactive_bar_plot_2_city(filtered_df),
-                generate_interactive_pie_chart_source(filtered_df),
+                pie_fig,
+                weather_bar_fig,
+                logos_bar_fig,
+                source_pie_fig,
                 pie_clickData,
                 bar_clickData,
                 bar_weather_clickData,
                 pie2_clickData,
                 dash.no_update,
-                filtered_df.to_dict('records'),
+                df_filtered.to_dict('records'),
                 dash.no_update,
-                filtered_df.to_dict('records'),
+                df_filtered.to_dict('records'),
                 reset_clicked,
                 {"display": "block"},
                 polygon_active,
-                dash.no_update
+                dash.no_update,
+                filter_comp_data,  # Single row or empty
+                filter_comp_data,
+                load_clicked
             )
+
+
 
 
 

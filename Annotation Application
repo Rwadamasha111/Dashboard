@@ -942,7 +942,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             valid_duration = valid_dur(dur_input)
             
             sheetidall= '1Xb_jW3hJAvOGg8SIE78o7y-AgCMJ1bga6gU1ONQYU28'
-            sheetrangeall = 'City!A1:U3000'
+            sheetrangeall = 'City!A1:U500000'
             df_all = city_load_data(sheetidall,sheetrangeall)
             matched_rows = df_all[df_all['Links'] == valid_url]
             
@@ -1006,7 +1006,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                        logos,comments]
 
             sheetid =  '1Xb_jW3hJAvOGg8SIE78o7y-AgCMJ1bga6gU1ONQYU28'
-            sheetrange  ='City!A1:R500'
+            sheetrange  ='City!A1:U50000'
             append_row_to_gsheet(sheetid,sheetrange,row_data)
             
             lat, lon = map(float, valid_coordinates.split(","))   
@@ -1634,7 +1634,7 @@ def loading_videoid_options(selected_city,update_ids):
 
     global df_city_edit
     sheetid_edit = '1Xb_jW3hJAvOGg8SIE78o7y-AgCMJ1bga6gU1ONQYU28'
-    sheetrange_edit = 'City!A1:U3000'
+    sheetrange_edit = 'City!A1:U50000'
     df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
     video_id_options =  df_city_edit[df_city_edit['City']==selected_city]['record_id'].to_list()  
     return (video_id_options,"Select a video id",df_city_edit.to_dict('records'))

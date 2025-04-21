@@ -1726,7 +1726,7 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
         return (
             False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update
         )
-    elif videoid != stored_videoid:
+    elif videoid != stored_videoid or videoid:
         row = df_city_edit[df_city_edit['record_id'] == videoid]
         if not row.empty:
             time_st = row['Start Time'].values[0]
@@ -1756,8 +1756,8 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
                 row['Comments'].values[0] if row['Comments'].values[0] else "",
                 row['Links'].values[0],False,False,value_check
             )
-
-        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)
+      
+        return (False, dash.no_update,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update)
     
     elif triggered_id == 'update.n_clicks':   
         return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (True,False,dash.no_update)

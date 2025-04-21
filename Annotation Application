@@ -30,6 +30,7 @@ import time
 import dash_player
 from dash import callback_context
 from shapely.geometry import Point, Polygon
+from datetime import timedelta
 
 
 # Google API imports
@@ -470,6 +471,9 @@ cities = city_load_data(sheetid,sheetrange)
 cities_list = ['Verona','Budapest','Milan','Bucharest','Bratislava']
 country_list = cities['Country'].unique()
 
+def parse_time(t):
+    minutes, seconds = map(int, t.split(":"))
+    return timedelta(minutes=minutes, seconds=seconds)  
 
 def generate_unique_random_id(city, df):
     df_filtered = df[df['City'] == city].copy()
@@ -931,12 +935,38 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             sheetrangeall = 'City!A1:U3000'
             df_all = city_load_data(sheetidall,sheetrangeall)
             matched_rows = df_all[df_all['Links'] == valid_url]
+            
+            if not checkbox:     
+                start_time = f"{minst}:{secst:02}"
+                end_time = f"{minend}:{secend:02}"
 
+                dur_time =  re.sub(r"^00:0?(\d):", r"\1:", dur_input)
+            else:
+                start_time=f"0:00"
+                end_time = f"0:00" 
+                dur_time = dur_input  
+                
             # Step 2: If there are any such rows, check for coordinate match
             if not matched_rows.empty:
                 if valid_coordinates in matched_rows['Coordinates'].values:
                     raise ValueError("Video link and Coordinates already exist!")  
+
                 video_name = matched_rows['OG File Name'].values[0]
+
+                matched_rows = matched_rows.copy()  # Safely modify
+
+                time_to_check = parse_time(start_time)
+                matched_rows['Start Time Parsed'] = matched_rows['Start Time'].apply(parse_time)
+                matched_rows['Finish Time Parsed'] = matched_rows['Finish Time'].apply(parse_time)
+
+                dur_dup = matched_rows.apply(
+                    lambda row: row['Start Time Parsed'] <= time_to_check <= row['Finish Time Parsed'],
+                    axis=1
+                )
+
+                if dur_dup.any():
+                    raise ValueError("There's already this video with the same timing, please select another duration!")
+
                 
             if 'youtube' in valid_url and 'Youtube' in sources:
                 with yt_dlp.YoutubeDL() as ydl:
@@ -953,15 +983,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             else:
                 raise ValueError("Video title not found - maybe not a matching source?")
 
-            if not checkbox:     
-                start_time = f"{minst}:{secst:02}"
-                end_time = f"{minend}:{secend:02}"
-
-                dur_time =  re.sub(r"^00:0?(\d):", r"\1:", dur_input)
-            else:
-                start_time=f"0:00"
-                end_time = f"0:00" 
-                dur_time = dur_input                    
+                  
            
             video_id = generate_unique_random_id(city_name,df_all)
             
@@ -1065,8 +1087,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             dash.no_update,
             dash.no_update,
             dash.no_update,
-            dash.no_update, dash.no_update , dash.no_update, dash.no_update , dash.no_update     
-            , dash.no_update  )
+            dash.no_update, dash.no_update , dash.no_update, dash.no_update , dash.no_update)
     
     elif triggered_id == 'save_later.n_clicks':
         try:
@@ -1194,8 +1215,10 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             if city_name:
                 country_match = cities[cities['City Name'] == city_name]['Country']
                 country_val = country_match.iloc[0] if not country_match.empty else ''
+                         
             else:
                 country_val = ''
+                map_center = (41.9028, 12.4964)
             return (False,dash.no_update,country_val,
                 dash.no_update,
                 dash.no_update,
@@ -1216,7 +1239,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update,
                 dash.no_update,
                 dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update , dash.no_update      )  # Rest of outputs unchanged
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update)  # Rest of outputs unchanged
         else:
             country_val = ''
             return (False, dash.no_update,

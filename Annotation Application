@@ -30,8 +30,7 @@ import time
 import dash_player
 from dash import callback_context
 from shapely.geometry import Point, Polygon
-from datetime import timedelta
-
+import datetime    
 
 # Google API imports
 from googleapiclient.discovery import build
@@ -468,12 +467,19 @@ global cities
 sheetid  = '1Svc-2iK5wvHFicmBZHoOxqf5iajdg57ntilgR_cM3ZE'
 sheetrange ='Cities!A1:E300'
 cities = city_load_data(sheetid,sheetrange)
-cities_list = ['Verona','Budapest','Milan','Bucharest','Bratislava']
+cities_list = ['Verona','Budapest','Milan','Bucharest','Bratislava','Prague']
 country_list = cities['Country'].unique()
 
 def parse_time(t):
-    minutes, seconds = map(int, t.split(":"))
-    return timedelta(minutes=minutes, seconds=seconds)  
+    parts = list(map(int, t.split(':')))
+    if len(parts) == 3:            # HH:MM:SS
+        h, m, s = parts
+    elif len(parts) == 2:          # MM:SS
+        h, m, s = 0, *parts
+    else:
+        raise ValueError('Bad time format')
+    return datetime.timedelta(hours=h, minutes=m, seconds=s)
+
 
 def generate_unique_random_id(city, df):
     df_filtered = df[df['City'] == city].copy()
@@ -800,31 +806,34 @@ def insert_tab_layout():
     ]
 )
 def calculate_duration(start_hours, start_minutes, start_seconds,
-                       end_hours, end_minutes, end_seconds,checked):
+                       end_hours, end_minutes, end_seconds, checked):
     
     if not checked:
-    # Calculate start and end times in total seconds
+        # Ensure all start and end inputs are valid (not None)
+        if start_hours is None or start_minutes is None or start_seconds is None:
+            return "Invalid duration!"
+        if end_hours is None or end_minutes is None or end_seconds is None:
+            return "Invalid duration!"
+
+        # Convert to total seconds
         start_total = start_hours * 3600 + start_minutes * 60 + start_seconds
         end_total = end_hours * 3600 + end_minutes * 60 + end_seconds
 
-        # Calculate difference in seconds
         duration_diff = end_total - start_total
-        
-        # Optionally, format the duration difference as HH:MM:SS
+
+        # Handle negative or zero duration
+        if duration_diff <= 0:
+            return "Invalid duration!"
+
         hours = duration_diff // 3600
         minutes = (duration_diff % 3600) // 60
         seconds = duration_diff % 60
-        formatted_diff = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        
-        # If the difference is negative, assume the end time is on the next day.
-        if duration_diff <= 0:
-            result_window = f"Invalid duration!"
-        else:
-            result_window = formatted_diff
-    else:
-        result_window = "Full Video"
 
-    return result_window
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    else:
+        return "Full Video"
+
         
 
 
@@ -858,6 +867,7 @@ def calculate_duration(start_hours, start_minutes, start_seconds,
         Output('links_table_store','data'),
         Output('map', 'viewport'),
         Output('map-layer', 'children'),
+        Output('checkbox','value'),
           
 
 ],
@@ -964,24 +974,28 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                     axis=1
                 )
 
-                if dur_dup.any():
-                    raise ValueError("There's already this video with the same timing, please select another duration!")
+                full_video_cross = matched_rows.apply(
+                    lambda row: row['Duration'] == "Full Video" ,
+                    axis=1
+                )
+                if dur_dup.any() or full_video_cross.any():
+                    raise ValueError("There's already this video with another crossing timing, please select another duration!")
 
-                
-            if 'youtube' in valid_url and 'Youtube' in sources:
-                with yt_dlp.YoutubeDL() as ydl:
-                    info_dict = ydl.extract_info(valid_url, download=False)
-                    video_name = info_dict.get('title', 'No title found')
-            elif 'tiktok' in valid_url and 'Tiktok' in sources:
-                with yt_dlp.YoutubeDL() as ydl:
-                    info_dict = ydl.extract_info(valid_url, download=False)
-                    video_name = info_dict.get('title', 'No title found')
-            elif 'facebook' in valid_url and 'facebook' in sources:
-                with yt_dlp.YoutubeDL() as ydl:
-                    info_dict = ydl.extract_info(valid_url, download=False)
-                    video_name = info_dict.get('title', 'No title found')
-            else:
-                raise ValueError("Video title not found - maybe not a matching source?")
+            else:   
+                if 'youtube' in valid_url and 'Youtube' in sources:
+                    with yt_dlp.YoutubeDL() as ydl:
+                        info_dict = ydl.extract_info(valid_url, download=False)
+                        video_name = info_dict.get('title', 'No title found')
+                elif 'tiktok' in valid_url and 'Tiktok' in sources:
+                    with yt_dlp.YoutubeDL() as ydl:
+                        info_dict = ydl.extract_info(valid_url, download=False)
+                        video_name = info_dict.get('title', 'No title found')
+                elif 'facebook' in valid_url and 'facebook' in sources:
+                    with yt_dlp.YoutubeDL() as ydl:
+                        info_dict = ydl.extract_info(valid_url, download=False)
+                        video_name = info_dict.get('title', 'No title found')
+                else:
+                    raise ValueError("Video title not found - maybe not a matching source?")
 
                   
            
@@ -1055,7 +1069,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             defaults['logos_list'],
             defaults['distortions_list'],
             defaults['analysts'],  
-            defaults['comments'], dash.no_update , dash.no_update, viewport, [marker]                    
+            defaults['comments'], dash.no_update , dash.no_update, viewport, [marker],[]                    
             )
 
 
@@ -1087,7 +1101,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             dash.no_update,
             dash.no_update,
             dash.no_update,
-            dash.no_update, dash.no_update , dash.no_update, dash.no_update , dash.no_update)
+            dash.no_update, dash.no_update , dash.no_update, dash.no_update , dash.no_update,dash.no_update)
     
     elif triggered_id == 'save_later.n_clicks':
         try:
@@ -1110,7 +1124,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             return (False,dash.no_update,dash.no_update,"",dash.no_update,dash.no_update,dash.no_update,dash.no_update,
             dash.no_update, dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,
             dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
-            dash.no_update, links_data ,links_data, dash.no_update , dash.no_update  )
+            dash.no_update, links_data ,links_data, dash.no_update , dash.no_update,dash.no_update  )
             
         except ValueError as e:
             # If any validation fails, catch and show the error message
@@ -1124,7 +1138,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
         dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
         dash.no_update,dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,
         dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update, dash.no_update , dash.no_update,    
-         dash.no_update , dash.no_update  )
+         dash.no_update , dash.no_update,dash.no_update  )
         
     elif triggered_id == 'links_table.selected_rows':
         row_idx = selected_link[0]
@@ -1134,7 +1148,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
         return (False,dash.no_update,dash.no_update,selected_url,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
         dash.no_update, dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,
         dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
-        dash.no_update, dash.no_update ,dash.no_update, dash.no_update , dash.no_update  )
+        dash.no_update, dash.no_update ,dash.no_update, dash.no_update , dash.no_update,dash.no_update  )
     
     
     elif triggered_id == 'place_map.n_clicks':
@@ -1188,7 +1202,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,dash.no_update,
-                viewport, [marker])
+                viewport, [marker],dash.no_update)
 
         except ValueError as e:
             error_message = html.Div(
@@ -1203,7 +1217,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update
+                dash.no_update, dash.no_update, dash.no_update,dash.no_update
             )
 
 
@@ -1239,7 +1253,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update,
                 dash.no_update,
                 dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update)  # Rest of outputs unchanged
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,dash.no_update)  # Rest of outputs unchanged
         else:
             country_val = ''
             return (False, dash.no_update,
@@ -1263,7 +1277,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                     dash.no_update,
                     dash.no_update,
                     dash.no_update,
-                    dash.no_update, dash.no_update, dash.no_update, dash.no_update , dash.no_update  )
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update , dash.no_update,dash.no_update  )
 
 
 def edit_tab_layout():
@@ -1376,7 +1390,14 @@ def edit_tab_layout():
                             dbc.Label("Duration:  "),
                             dcc.Input(id='output-duration_edit', disabled=True, style={'margin-top': '30px', 'margin-left': '30px','font-weight': 'bold'}),
                         ], width=2),
-                        dbc.Col(dbc.Button("↻", id='update_ids', color='success', n_clicks=0, style=button_style4),width=1),
+                        dbc.Col([
+                            dbc.Button("↻", id='update_ids', color='success', n_clicks=0, style=button_style4),
+                            dcc.Checklist(
+                                    options=[{'label': '  Full', 'value': 'on'}],
+                                    value=[], 
+                                    id='checkbox_edit',
+                                    style={'marginLeft': '-50px', 'marginTop': '965px'})                             
+                            ],width=1),
                         dbc.Col([
                             html.H4("Anchoring Features"),
                             dbc.Label("Distance from a building:"),
@@ -1564,32 +1585,39 @@ def edit_tab_layout():
         Input('input-seconds_edit','value'),
         Input('input-hours_end_edit','value'),
         Input('input-minutes_end_edit','value'),
-        Input('input-seconds_end_edit','value'), 
+        Input('input-seconds_end_edit','value'),
+        Input('checkbox_edit','value') 
     ]
 )
 
 def calculate_duration_edit(start_hours, start_minutes, start_seconds,
-                       end_hours, end_minutes, end_seconds):
+                       end_hours, end_minutes, end_seconds,checkbox_edit):
     # Calculate start and end times in total seconds
-    start_total = start_hours * 3600 + start_minutes * 60 + start_seconds
-    end_total = end_hours * 3600 + end_minutes * 60 + end_seconds
+    if not checkbox_edit:
+        # Ensure all start and end inputs are valid (not None)
+        if start_hours is None or start_minutes is None or start_seconds is None:
+            return "Invalid duration!"
+        if end_hours is None or end_minutes is None or end_seconds is None:
+            return "Invalid duration!"
 
-    # Calculate difference in seconds
-    duration_diff = end_total - start_total
+        # Convert to total seconds
+        start_total = start_hours * 3600 + start_minutes * 60 + start_seconds
+        end_total = end_hours * 3600 + end_minutes * 60 + end_seconds
+
+        duration_diff = end_total - start_total
+
+        # Handle negative or zero duration
+        if duration_diff <= 0:
+            return "Invalid duration!"
+
+        hours = duration_diff // 3600
+        minutes = (duration_diff % 3600) // 60
+        seconds = duration_diff % 60
+
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
     
-    # Optionally, format the duration difference as HH:MM:SS
-    hours = duration_diff // 3600
-    minutes = (duration_diff % 3600) // 60
-    seconds = duration_diff % 60
-    formatted_diff = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    
-    # If the difference is negative, assume the end time is on the next day.
-    if duration_diff <= 0:
-        result_window = f"Invalid duration!"
     else:
-        result_window = formatted_diff
-
-    return result_window
+        return "Full Video"
 
 @app.callback ([
         Output("videoid_edit","options"),
@@ -1637,7 +1665,9 @@ def loading_videoid_options(selected_city,update_ids):
         Output('comments_edit','value'), 
         Output('picked_video_edit','url'),
         Output("confirmation-update", "is_open"),
-        Output('delete-modal',"is_open")
+        Output('delete-modal',"is_open"),
+        Output('checkbox_edit','value'),
+        
    ],
     [ 
     Input("cities_edit","value"),
@@ -1645,12 +1675,6 @@ def loading_videoid_options(selected_city,update_ids):
     Input('sources_edit','value'),    
     Input('link_url_edit','value'),
     Input('coordinates_input_edit','value'),
-    Input('input-hours_edit','value'),
-    Input('input-minutes_edit','value'),
-    Input('input-seconds_edit','value'),
-    Input('input-hours_end_edit','value'),
-    Input('input-minutes_end_edit','value'),
-    Input('input-seconds_end_edit','value'), 
     Input('tod_edit','value'),
     Input('weather_edit','value'),       
     Input('vq_edit','value'),    
@@ -1666,7 +1690,9 @@ def loading_videoid_options(selected_city,update_ids):
     Input("confirm-yes", "n_clicks"),
     Input("confirm-no", "n_clicks"),
     Input('delete','n_clicks'),
-    Input('delete_btn','n_clicks')
+    Input('delete_btn','n_clicks'),
+    
+
            
     ],
 [    
@@ -1675,14 +1701,21 @@ def loading_videoid_options(selected_city,update_ids):
  State("stored-videoid", "data"),
  State('latest_df','data'),
  State("confirmation-update", "is_open"),
- State('delete_password','value'),   
+ State('delete_password','value'),
+ State('checkbox_edit','value'),
+State('input-hours_edit','value'),
+State('input-minutes_edit','value'),
+State('input-seconds_edit','value'),
+State('input-hours_end_edit','value'),
+State('input-minutes_end_edit','value'),
+State('input-seconds_end_edit','value'),    
 ],
                
 )
-def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_st_edit, minute_st_edit, sec_st_edit,
-              hours_end_edit, min_end_edit, sec_end_edit, tod_edit, weather_edit, vq_edit, tilt_edit, distance_edit,
+def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edit, weather_edit, vq_edit, tilt_edit, distance_edit,
               occlusion_edit, terrain_edit, logos_edit, distortions_edit, analyst_edit, comments_edit, update,confirm_yes,confirm_no,
-              delete,delete_btn, duration_edit, defaults_edit,stored_videoid,latest_df,update_confirmation,delete_password):
+              delete,delete_btn, duration_edit, defaults_edit,stored_videoid,latest_df,update_confirmation,delete_password,checkbox_ed,
+              hours_st_edit, minute_st_edit, sec_st_edit,hours_end_edit, min_end_edit, sec_end_edit,):
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'] if ctx.triggered else None
     df_city_edit = pd.DataFrame(latest_df)
@@ -1691,7 +1724,7 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
     if videoid == "Select a video id":
         # Reset all fields to defaults
         return (
-            False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False
+            False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update
         )
     elif videoid != stored_videoid:
         row = df_city_edit[df_city_edit['record_id'] == videoid]
@@ -1702,7 +1735,7 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
             time_end = row['Finish Time'].values[0]
             hh_end, mm_end, ss_end = parse_time_string(time_end)
 
-        
+            value_check=['on'] if row['Duration'].iloc[0] == 'Full Video' else []
             return (
                 False, dash.no_update, videoid,
                 row['Source'].values[0],
@@ -1721,13 +1754,13 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
                 row['Distortions'].values[0],
                 row['Analyst'].values[0],
                 row['Comments'].values[0] if row['Comments'].values[0] else "",
-                row['Links'].values[0],False,False
+                row['Links'].values[0],False,False,value_check
             )
 
-        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,)
+        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)
     
     elif triggered_id == 'update.n_clicks':   
-        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (True,False,)
+        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (True,False,dash.no_update)
 
     elif triggered_id =='confirm-yes.n_clicks' :
         try:
@@ -1738,51 +1771,75 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
             valid_coordinates_update = valid_coords(coord_edit)
             valid_duration_update = valid_dur(duration_edit)
 
+            if not checkbox_ed:     
+                start_time_edit = f"{hours_st_edit}:{minute_st_edit:02}:{sec_st_edit:02}"
+                end_time_edit = f"{hours_end_edit}:{min_end_edit:02}:{sec_end_edit:02}" 
+                dur_time =  re.sub(r"^00:0?(\d):", r"\1:", duration_edit)
+            else:
+                start_time_edit =f"0:00"
+                end_time_edit=f"0:00"
+                dur_time= duration_edit
+
             other_rows = df_city_edit[df_city_edit['record_id'] != videoid]
 
             # Check if the new URL and Coordinates pair exists elsewhere
             duplicate_match = other_rows[
-                (other_rows['Links'] == valid_url_update) & 
-                (other_rows['Coordinates'] == valid_coordinates_update)
-            ]
+                (other_rows['Links'] == valid_url_update)]
 
             if not duplicate_match.empty:
-                raise ValueError("Video link and Coordinates already exist in another entry!")
-            
-            if valid_url_update not in df_city_edit['Links'].values:  
-                if 'youtube' in valid_url_update and 'Youtube' in sourceedit:
-                    with yt_dlp.YoutubeDL() as ydl:
-                        info_dict = ydl.extract_info(valid_url_update, download=False)
-                        video_name_edit = info_dict.get('title', 'No title found')
-                elif 'tiktok' in valid_url_update and 'Tiktok' in sourceedit:
-                    with yt_dlp.YoutubeDL() as ydl:
-                        info_dict = ydl.extract_info(valid_url_update, download=False)
-                        video_name_edit = info_dict.get('title', 'No title found')
-                        
-                elif 'facebook' in valid_url_update and 'facebook' in sourceedit:
-                    with yt_dlp.YoutubeDL() as ydl:
-                        info_dict = ydl.extract_info(valid_url_update, download=False)
-                        video_name_edit = info_dict.get('title', 'No title found')
-                else:
-                    raise ValueError("Video title not found - maybe not a matching source?")     
-            
-            video_name_edit = df_city_edit[
-                df_city_edit['Links'] == valid_url_update
-            ]['OG File Name'].values[0]
+                if valid_coordinates_update in duplicate_match['Coordinates'].values:
+                    raise ValueError("Video link and Coordinates already exist in another entry!")
+                
+                video_name_edit = df_city_edit[
+                    df_city_edit['Links'] == valid_url_update
+                ]['OG File Name'].values[0]
+                duplicate_match = duplicate_match.copy()  # Safely modify
 
-            start_time_edit = f"{hours_st_edit}:{minute_st_edit:02}:{sec_st_edit:02}"
-            end_time_edit = f"{hours_end_edit}:{min_end_edit:02}:{sec_end_edit:02}" 
-            
+                time_to_check_ed = parse_time(start_time_edit)
+                duplicate_match['Start Time Parsed'] = duplicate_match['Start Time'].apply(parse_time)
+                duplicate_match['Finish Time Parsed'] = duplicate_match['Finish Time'].apply(parse_time)
+
+                dur_dup = duplicate_match.apply(
+                    lambda row: row['Start Time Parsed'] <= time_to_check_ed <= row['Finish Time Parsed'],
+                    axis=1
+                )
+
+                full_video_cross = duplicate_match.apply(
+                    lambda row: row['Duration'] == "Full Video" ,
+                    axis=1
+                )
+                if dur_dup.any() or full_video_cross.any():
+                    raise ValueError("There's already this video with another crossing timing, please select another duration!")
+                
+            else:                
+                if valid_url_update not in df_city_edit['Links'].values:  
+                    if 'youtube' in valid_url_update and 'Youtube' in sourceedit:
+                        with yt_dlp.YoutubeDL() as ydl:
+                            info_dict = ydl.extract_info(valid_url_update, download=False)
+                            video_name_edit = info_dict.get('title', 'No title found')
+                    elif 'tiktok' in valid_url_update and 'Tiktok' in sourceedit:
+                        with yt_dlp.YoutubeDL() as ydl:
+                            info_dict = ydl.extract_info(valid_url_update, download=False)
+                            video_name_edit = info_dict.get('title', 'No title found')
+                            
+                    elif 'facebook' in valid_url_update and 'facebook' in sourceedit:
+                        with yt_dlp.YoutubeDL() as ydl:
+                            info_dict = ydl.extract_info(valid_url_update, download=False)
+                            video_name_edit = info_dict.get('title', 'No title found')
+                    else:
+                        raise ValueError("Video title not found - maybe not a matching source?")     
+                
             row = df_city_edit[df_city_edit['record_id'] == videoid]    
             row_number_up = row.index[0] + 2  # Adjust for 1-based index and header row
             values_update= [valid_url_update,video_name_edit,sourceedit,valid_coordinates_update,start_time_edit,end_time_edit,
-            analyst_edit,tod_edit,terrain_edit,weather_edit,vq_edit,tilt_edit,distance_edit,
+            dur_time,analyst_edit,tod_edit,terrain_edit,weather_edit,vq_edit,tilt_edit,distance_edit,
             occlusion_edit,distortions_edit,logos_edit,comments_edit]  
             sheetid_update = '1Xb_jW3hJAvOGg8SIE78o7y-AgCMJ1bga6gU1ONQYU28'
             
             try:
                 update_row(sheetid_update, row_number_up, values_update)
             except Exception as e:
+                
                 # Build a Dash error window if the Sheets update fails
                 error_window_update = html.Div([
                     html.H5("⚠️ Update Failed", style={"color": "red"}),
@@ -1794,7 +1851,7 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
                     error_window_update,       # show our new error
                     stored_videoid,            # keep current selection
                     *([dash.no_update] * 21),  # no other fields change
-                    False                      # disable Confirm button
+                    False,False,dash.no_update                      # disable Confirm button
                 )
             
             result_window_update = html.Div([
@@ -1824,8 +1881,9 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
                     html.Li(f"Comments: {comments_edit}")                                                                    
                 ])
             ])
-               
-            return True,result_window_update,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False        
+            
+            checkbox_ed =[]  
+            return True,result_window_update,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,checkbox_ed       
         except ValueError as e:
             # If any validation fails, catch and show the error message
             error_message = html.Div(
@@ -1834,11 +1892,11 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
                     html.P(str(e), style={"color": "black"})
                 ]
             )
-            return(True, error_message,stored_videoid) + (dash.no_update,) * 21 + (False,False,)
+            return(True, error_message,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)
     
     elif triggered_id == 'delete.n_clicks':
         if stored_videoid:
-            return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,True,)
+            return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,True,dash.no_update)
         else:
             raise ValueError("No  selected to remove!")
         
@@ -1858,17 +1916,17 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, hours_s
                     error_window_update,       # show our new error
                     stored_videoid,            # keep current selection
                     *([dash.no_update] * 21),  # no other fields change
-                    False                      # disable Confirm button
+                    False,False,dash.no_update                      # disable Confirm button
                 )
             
             result_removal = f"{videoid} has successfully removed !"
-            return True,result_removal,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False        
+            return True,result_removal,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update        
         else:
             result_removal = "Incorrect Password, please try again!"
-            return (True,result_removal,stored_videoid) + (dash.no_update,) * 21 + (False,False,)        
+            return (True,result_removal,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)        
 
     # No videoid selected, just update options
-    return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,)
+    return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)
 
 
 
@@ -1901,4 +1959,4 @@ app.layout = html.Div(
 )                 
              
 if __name__ == "__main__":
-    app.run(host='100.118.47.56', port=8051, debug=True)
+    app.run(host='100.118.47.56', port=8050, debug=True)

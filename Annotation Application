@@ -465,9 +465,9 @@ def city_load_data(sheetid,sheetrange):
 
 global cities
 sheetid  = '1Svc-2iK5wvHFicmBZHoOxqf5iajdg57ntilgR_cM3ZE'
-sheetrange ='Cities!A1:E300'
+sheetrange ='Cities!A1:F300'
 cities = city_load_data(sheetid,sheetrange)
-cities_list = ['Verona','Budapest','Milan','Bucharest','Bratislava','Prague']
+cities_list = ['Verona','Budapest','Milan','Bucharest','Bratislava','Prague','Singapore']
 country_list = cities['Country'].unique()
 
 def parse_time(t):
@@ -480,22 +480,61 @@ def parse_time(t):
         raise ValueError('Bad time format')
     return datetime.timedelta(hours=h, minutes=m, seconds=s)
 
+           
+import random
+
+import random
 
 def generate_unique_random_id(city, df):
     df_filtered = df[df['City'] == city].copy()
-    rec_id = df_filtered['record_id'].iloc[-1]
-    rec_id_start = rec_id[:rec_id.rfind('_') + 1]
+    
+    # Create a set of existing record_id prefixes for efficient lookup
+    existing_prefixes = set(rec_id[:rec_id.rfind('_') + 1] for rec_id in df['record_id'].values)
 
-    while True:
-        x = random.randint(9, 99)
-        y = random.randint(9, 99)
-        z = random.randint(99, 999)
-        xyz = int(f"{x}{y}{z}")
-        new_rec_id = rec_id_start + str(xyz)
+    def create_random_initials():
+        country_name = cities[cities['City Name'] == city]['Country'].values[0].lower()
+        city_name = city.lower()
+        
+        # Ensure the names are long enough for sampling
+        if len(country_name) < 2 or len(city_name) < 3:
+            raise ValueError("Country or city name too short for random sampling.")
+        
+        init_1 = ''.join(random.sample(country_name, 2))
+        init_2 = ''.join(random.sample(city_name, 3))
+        return f"{init_1}_{init_2}_"
 
-        if new_rec_id not in df_filtered['record_id'].values:
-            return new_rec_id
-           
+    if df_filtered.empty:
+        # Default deterministic initials
+        country_name = cities[cities['City Name'] == city]['Country'].values[0]
+        init_1 = f"{country_name[:2].lower()}_"
+        init_2 = f"{city[:3].lower()}_"
+        initials = init_1 + init_2
+
+        # If deterministic initials are already used, generate random ones
+        if initials in existing_prefixes:
+            max_tries = 1000
+            for _ in range(max_tries):
+                initials = create_random_initials()
+                if initials not in existing_prefixes:
+                    break
+            else:
+                raise RuntimeError("Failed to find unique initials after many attempts.")
+
+        # Generate unique numeric part and return
+        xyz = f"{random.randint(9, 99)}{random.randint(9, 99)}{random.randint(99, 999)}"
+        return initials + xyz
+
+    else:
+        # Generate from last record_id for existing city
+        rec_id = df_filtered['record_id'].iloc[-1]
+        rec_id_start = rec_id[:rec_id.rfind('_') + 1]
+
+        while True:
+            xyz = f"{random.randint(9, 99)}{random.randint(9, 99)}{random.randint(99, 999)}"
+            new_rec_id = rec_id_start + xyz
+            if new_rec_id not in df_filtered['record_id'].values:
+                return new_rec_id
+
         
 def insert_tab_layout():
     return html.Div(
@@ -563,9 +602,11 @@ def insert_tab_layout():
                             html.Br(),
                             dbc.Label("Video Link:"),
                             dcc.Input(id='link_url', type='text', value="", className="form-control"),
+                            html.Div(id="link_url_error", style={"color": "red"}),
                             html.Br(),
                             dbc.Label("Coordinates:"),
                             dcc.Input(id='coordinates_input', type='text', value="", className="form-control"),
+                            html.Div(id="coords_error", style={"color": "red"}),
                             html.Br(),
                             html.Br(),
                             html.Br(),
@@ -608,7 +649,7 @@ def insert_tab_layout():
                             dcc.Input(id='output-duration', disabled=True, style={'margin-top': '30px', 'margin-left': '30px','font-weight': 'bold'}),
                         ], width=2),
                         dbc.Col([dbc.Button("Save for later", id="save_later", color="success", n_clicks=0,style=save_link_btn),
-                        dbc.Button("Place on map", id="place_map", color="success", n_clicks=0,style=place_map_btn),
+                        dbc.Button("Check", id="place_map", color="success", n_clicks=0,style=place_map_btn),
                         dcc.Checklist(
                                 options=[{'label': '  Full', 'value': 'on'}],
                                 value=[], 
@@ -660,6 +701,18 @@ def insert_tab_layout():
                                 value='',
                                 placeholder = "Select a Distortion",
                                 className="form-control"
+                            ),
+                            html.Br(),
+                            html.H4("Map",style=heading_style2),
+                            dl.Map(
+                                id='map',
+                                children=[
+                                    dl.TileLayer(),
+                                    dl.LayerGroup(id="map-layer", children=[]),
+                                ],
+                                center=(41.9028, 12.4964),  
+                                zoom=10,
+                                style={"width": "100%", "height": "400px", "margin": "6px","border": "2px solid black"}
                             ),
                         ], width=2),
                         dbc.Col(width=1),
@@ -715,6 +768,7 @@ def insert_tab_layout():
                             dbc.Label("Comments:"),
                             dcc.Input(id='comments', type='text', value="", className="form-control"),
                             ],width=2),
+                            dbc.Col(width=1),
                         dbc.Col([
                             html.H4("Links Collection",style=heading_style2),
                             dash_table.DataTable(
@@ -748,18 +802,25 @@ def insert_tab_layout():
                                     'fontWeight': 'bold',
                                 },
                             ),
-                            html.Br(),
-                            html.H4("Map",style=heading_style2),
-                            dl.Map(
-                                id='map',
-                                children=[
-                                    dl.TileLayer(),
-                                    dl.LayerGroup(id="map-layer", children=[]),
-                                ],
-                                center=(41.9028, 12.4964),  
-                                zoom=10,
-                                style={"width": "100%", "height": "500px", "margin": "6px","border": "2px solid black"}
-                            ),
+                    html.Br(),
+                    html.Br(),    
+                    html.Br(),    
+                        html.H4("Watch It Here:",style=heading_style2),
+                    html.Br(),                 
+                html.Div(
+                    dash_player.DashPlayer(
+                        id='picked_video_insert',
+                        url="",
+                        controls=True,
+                        width="800px",
+                        height="400px",
+                        style={"border": "2px solid black"}
+                    ),
+                    style={
+                        "display": "flex",
+                        "justifyContent": "center",
+                        "marginBottom": "-50px",
+                    })
 
                     ],width=3),
                         
@@ -868,6 +929,9 @@ def calculate_duration(start_hours, start_minutes, start_seconds,
         Output('map', 'viewport'),
         Output('map-layer', 'children'),
         Output('checkbox','value'),
+        Output('picked_video_insert','url'),
+        Output('link_url_error', 'children'),
+        Output('coords_error', 'children'),
           
 
 ],
@@ -908,6 +972,7 @@ def calculate_duration(start_hours, start_minutes, start_seconds,
     State('output-duration','value'),
     State('links_table_store','data'),
     State('checkbox','value'),
+
  
 ]
 
@@ -930,9 +995,84 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
         links_data = links_table
     else:
         links_data =[]
-    
-           
-    if triggered_id == 'insert.n_clicks':
+        
+    if triggered_id == 'link_url.value':
+        if linkurl:
+            try: 
+                valid_url_watch = is_valid_url(linkurl)
+                if valid_url_watch:
+                    picked_video = valid_url_watch
+                    return (
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update,dash.no_update,picked_video,"",dash.no_update
+                    )
+            except ValueError as e:
+                # If any validation fails, catch and show the error message
+                error_input = html.Div(f"Incorrect Link Format", style={"color": "red"})
+
+                return(dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
+                dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
+                dash.no_update,dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,
+                dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update, dash.no_update , dash.no_update,    
+                dash.no_update , dash.no_update,dash.no_update,dash.no_update,error_input,dash.no_update)
+        else:
+            return (
+            dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+            dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+            dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+            dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+            dash.no_update, dash.no_update, dash.no_update,dash.no_update,"","",dash.no_update
+        )   
+    if triggered_id == 'coordinates_input.value':
+        if coords_input:
+            try: 
+                valid_coordintes_place = is_valid_coord(coords_input)
+                if valid_coordintes_place or coords_input:
+                    lat, lon = map(float, coords_input.split(","))
+                    marker = dl.Marker(
+                        position=[lat, lon],
+                        children=[dl.Popup(coords_input)],
+                        id='city-mark'
+                    )
+
+                    viewport = {'center': [lat, lon], 'zoom': 14}                 
+                    return (
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        dash.no_update, viewport, [marker],dash.no_update,dash.no_update,dash.no_update,""
+                    )
+            except ValueError as e:
+                # If any validation fails, catch and show the error message
+                error_input = html.Div(f"Incorrect Coordinates Format", style={"color": "red"})
+                
+                return(dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
+                dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
+                dash.no_update,dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,
+                dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update, dash.no_update , dash.no_update,    
+                dash.no_update , dash.no_update,dash.no_update,dash.no_update,dash.no_update,error_input)
+        else:
+            if city_name:
+                center= cities[cities['City Name'] == city_name]['CityCenter'].iloc[0]
+                lat, lon =map(float, center.split(",")) 
+                map_center_city = {'center': [lat, lon], 'zoom': 10}
+            else:
+                map_center_city = {'center': [41.9028, 12.4964], 'zoom': 10}    
+            return (
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update, map_center_city,[],dash.no_update,dash.no_update,dash.no_update,""
+            ) 
+
+
+                    
+    elif triggered_id == 'insert.n_clicks':
         try:
             general_validation = general_validations (analyst,city_name,distancebuild,occlusion,terrain,
                          distortions, tod,weather,vq,tilt)
@@ -1017,7 +1157,15 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             )
 
             viewport = {'center': [lat, lon], 'zoom': 14}
-                                        
+            
+            if links_table is not None:            
+                links_dframe= pd.DataFrame(links_table)
+                links_dframe = links_dframe[links_dframe['links']!=valid_url]
+                links_data_clean = links_dframe.to_dict('records')
+            else:
+                links_dframe= pd.DataFrame(links_table)
+                links_data_clean = links_dframe.to_dict('records')
+                                                        
             # If all validations pass
             result_window = html.Div([
                 html.H1('Video Added Successfully!'),
@@ -1026,6 +1174,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 html.Ul([
                     html.Li(f"City: {city_name}"),
                     html.Li(f"City: {country_name}"),
+                    html.Li(f"Video id: {video_id}"),
                     html.Li(f"Video Link: {valid_url}"),
                     html.Li(f"Video Name: {video_name}"),
                     html.Li(f"Video Source: {sources}"),                    
@@ -1069,7 +1218,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             defaults['logos_list'],
             defaults['distortions_list'],
             defaults['analysts'],  
-            defaults['comments'], dash.no_update , dash.no_update, viewport, [marker],[]                    
+            defaults['comments'], links_data_clean , links_data_clean, viewport, [marker],[],dash.no_update,dash.no_update,dash.no_update                     
             )
 
 
@@ -1101,7 +1250,8 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             dash.no_update,
             dash.no_update,
             dash.no_update,
-            dash.no_update, dash.no_update , dash.no_update, dash.no_update , dash.no_update,dash.no_update)
+            dash.no_update, dash.no_update , dash.no_update, dash.no_update ,
+            dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)
     
     elif triggered_id == 'save_later.n_clicks':
         try:
@@ -1124,7 +1274,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             return (False,dash.no_update,dash.no_update,"",dash.no_update,dash.no_update,dash.no_update,dash.no_update,
             dash.no_update, dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,
             dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
-            dash.no_update, links_data ,links_data, dash.no_update , dash.no_update,dash.no_update  )
+            dash.no_update, links_data ,links_data, dash.no_update , dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update )
             
         except ValueError as e:
             # If any validation fails, catch and show the error message
@@ -1138,17 +1288,18 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
         dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
         dash.no_update,dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,
         dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update, dash.no_update , dash.no_update,    
-         dash.no_update , dash.no_update,dash.no_update  )
+         dash.no_update , dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update )
         
     elif triggered_id == 'links_table.selected_rows':
         row_idx = selected_link[0]
         links_df = pd.DataFrame(links_table)
         if row_idx < len(links_df):
             selected_url = links_df.iloc[row_idx][links_df.columns[0]]
+            picked_url = selected_url
         return (False,dash.no_update,dash.no_update,selected_url,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
         dash.no_update, dash.no_update,dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,
         dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update,
-        dash.no_update, dash.no_update ,dash.no_update, dash.no_update , dash.no_update,dash.no_update  )
+        dash.no_update, dash.no_update ,dash.no_update, dash.no_update , dash.no_update,dash.no_update,picked_url,dash.no_update,dash.no_update )
     
     
     elif triggered_id == 'place_map.n_clicks':
@@ -1202,7 +1353,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,dash.no_update,
-                viewport, [marker],dash.no_update)
+                viewport, [marker],dash.no_update,dash.no_update,dash.no_update,dash.no_update )
 
         except ValueError as e:
             error_message = html.Div(
@@ -1217,7 +1368,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update,dash.no_update
+                dash.no_update, dash.no_update, dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update 
             )
 
 
@@ -1225,14 +1376,16 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                                                      
     else:
         # Update Country based on City selected
-        if not city_name == None:
+        if triggered_id == 'cities.value':
             if city_name:
                 country_match = cities[cities['City Name'] == city_name]['Country']
                 country_val = country_match.iloc[0] if not country_match.empty else ''
-                         
+                center= cities[cities['City Name'] == city_name]['CityCenter'].iloc[0]
+                lat, lon =map(float, center.split(",")) 
+                map_center_city = {'center': [lat, lon], 'zoom': 10}         
             else:
                 country_val = ''
-                map_center = (41.9028, 12.4964)
+                map_center_city= {'center': [41.9028, 12.4964], 'zoom': 10} 
             return (False,dash.no_update,country_val,
                 dash.no_update,
                 dash.no_update,
@@ -1253,11 +1406,10 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update,
                 dash.no_update,
                 dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,dash.no_update)  # Rest of outputs unchanged
+                dash.no_update, dash.no_update, dash.no_update, map_center_city,
+                [],dash.no_update,dash.no_update,dash.no_update,dash.no_update )  # Rest of outputs unchanged
         else:
-            country_val = ''
             return (False, dash.no_update,
-                    country_val,
                     dash.no_update,
                     dash.no_update,
                     dash.no_update,
@@ -1277,8 +1429,11 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                     dash.no_update,
                     dash.no_update,
                     dash.no_update,
-                    dash.no_update, dash.no_update, dash.no_update, dash.no_update , dash.no_update,dash.no_update  )
+                    dash.no_update,
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update ,
+                    dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update )
 
+        
 
 def edit_tab_layout():
      return html.Div(
@@ -1726,7 +1881,7 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
         return (
             False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update
         )
-    elif videoid != stored_videoid or videoid:
+    elif videoid != stored_videoid:
         row = df_city_edit[df_city_edit['record_id'] == videoid]
         if not row.empty:
             time_st = row['Start Time'].values[0]

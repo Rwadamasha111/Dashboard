@@ -37,6 +37,7 @@ from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 from oauth2client.client import GoogleCredentials
 from google.oauth2 import service_account
+from uuid import uuid4
 
 
 #ydl_opts = {
@@ -133,7 +134,8 @@ button_style3 = {
     "color": "white",
     "textAlign": "center",
     "boxShadow": "0 8px 16px rgba(0, 0, 0, 0.2)",
-    "transition": "all 0.3s ease-in-out"
+    "transition": "all 0.3s ease-in-out",
+
 }
 
 button_style4 = {
@@ -172,6 +174,21 @@ place_map_btn = {
     "top": "440px",
     "borderRadius": "50px",
 }
+
+check_btn_ed = {
+    "padding": "5px 10px",
+    "border": "2px solid black",
+    "fontWeight": "bold",
+    "background-color":'blue',
+    "fontSize": "16px",
+    "textAlign": "center",
+    "boxShadow": "0 8px 16px rgba(0, 0, 0, 0.2)",
+    "position": "relative",
+    "top": "470px",
+    "left": "-50px",
+    "borderRadius": "50px",
+}
+
 
 check_div ={
    "top": "985px", 
@@ -1466,6 +1483,7 @@ def edit_tab_layout():
                 }),
                 dcc.Store(id="stored-videoid", data=None),
                 dcc.Store(id='latest_df',data=None),
+                dcc.Store(id="refresh_flag"),
 
                     html.H1("Edit Mode", style=heading_style),
                     html.Hr(),
@@ -1501,9 +1519,11 @@ def edit_tab_layout():
                             html.Br(),
                             dbc.Label("Video Link:"),
                             dcc.Input(id='link_url_edit', type='text', value="", className="form-control"),
+                            html.Div(id="link_error_edit", style={"color": "red"}),
                             html.Br(),
                             dbc.Label("Coordinates:"),
                             dcc.Input(id='coordinates_input_edit', type='text', value="", className="form-control"),
+                            html.Div(id="coords_error_ed", style={"color": "red"}),
                             html.Br(),
                             html.Br(),
                             html.Br(),
@@ -1547,6 +1567,7 @@ def edit_tab_layout():
                         ], width=2),
                         dbc.Col([
                             dbc.Button("↻", id='update_ids', color='success', n_clicks=0, style=button_style4),
+                            dbc.Button("Check", id="place_map_ed", color="success", n_clicks=0,style=check_btn_ed),
                             dcc.Checklist(
                                     options=[{'label': '  Full', 'value': 'on'}],
                                     value=[], 
@@ -1593,6 +1614,18 @@ def edit_tab_layout():
                                 options=[{'label': d, 'value': d} for d in distortions],
                                 value='',
                                 className="form-control"
+                            ),
+                            html.Br(),
+                            html.H4("Map",style=heading_style2),
+                            dl.Map(
+                                id='map_edit',
+                                children=[
+                                    dl.TileLayer(),
+                                    dl.LayerGroup(id="map-layer_ed", children=[]),
+                                ],
+                                center=(41.9028, 12.4964),  
+                                zoom=10,
+                                style={"width": "100%", "height": "400px", "margin": "6px","border": "2px solid black"}
                             ),
                         ], width=2),
                         dbc.Col(width=1),
@@ -1670,7 +1703,7 @@ def edit_tab_layout():
                             dbc.Button("Update", id='update', color='success', n_clicks=0, style=button_style2),
                             dbc.Button("Delete", id='delete', color='danger', n_clicks=0, style=button_style3)
                         ],
-                        style={"display": "flex", "justifyContent": "center", "gap": "40px", "marginBottom": "30px"}
+                        style={"display": "flex", "justifyContent": "right", "gap": "40px", "marginBottom": "30px"}
                     ),
                         # Third Column (Button + Modal)
 
@@ -1774,16 +1807,25 @@ def calculate_duration_edit(start_hours, start_minutes, start_seconds,
     else:
         return "Full Video"
 
-@app.callback ([
-        Output("videoid_edit","options"),
-        Output("videoid_edit","value"), 
-        Output('latest_df','data') 
-],
-[Input("cities_edit","value"),
-  Input("update_ids","n_clicks"),
 
-  ]               
-)              
+def get_videoid_options(city_name: str):
+    """Return (options_list, latest_df)."""
+    sheet_id   = '1Xb_jW3hJAvOGg8SIE78o7y-AgCMJ1bga6gU1ONQYU28'
+    sheet_rng  = 'City!A1:U50000'
+    df         = city_load_data(sheet_id, sheet_rng)
+    options    = df.loc[df['City'] == city_name, 'record_id'].tolist()
+    return options, df
+
+
+@app.callback(
+    Output("videoid_edit","options"),
+    Output("videoid_edit","value"),
+    Output("latest_df",   "data"),
+    Input("cities_edit",  "value"),
+    Input("update_ids",   "n_clicks"),
+         # <-- NEW
+    prevent_initial_call=True
+)            
 
 def loading_videoid_options(selected_city,update_ids):
 
@@ -1822,6 +1864,11 @@ def loading_videoid_options(selected_city,update_ids):
         Output("confirmation-update", "is_open"),
         Output('delete-modal',"is_open"),
         Output('checkbox_edit','value'),
+        Output('link_error_edit', 'children'),
+        Output('coords_error_ed', 'children'),
+        Output('map_edit', 'viewport'),
+        Output('map-layer_ed', 'children'),
+        
         
    ],
     [ 
@@ -1846,6 +1893,7 @@ def loading_videoid_options(selected_city,update_ids):
     Input("confirm-no", "n_clicks"),
     Input('delete','n_clicks'),
     Input('delete_btn','n_clicks'),
+    Input('place_map_ed','n_clicks'),
     
 
            
@@ -1869,7 +1917,7 @@ State('input-seconds_end_edit','value'),
 )
 def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edit, weather_edit, vq_edit, tilt_edit, distance_edit,
               occlusion_edit, terrain_edit, logos_edit, distortions_edit, analyst_edit, comments_edit, update,confirm_yes,confirm_no,
-              delete,delete_btn, duration_edit, defaults_edit,stored_videoid,latest_df,update_confirmation,delete_password,checkbox_ed,
+              delete,delete_btn, check_btn,duration_edit, defaults_edit,stored_videoid,latest_df,update_confirmation,delete_password,checkbox_ed,
               hours_st_edit, minute_st_edit, sec_st_edit,hours_end_edit, min_end_edit, sec_end_edit,):
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'] if ctx.triggered else None
@@ -1879,9 +1927,119 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
     if videoid == "Select a video id":
         # Reset all fields to defaults
         return (
-            False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update
-        )
-    elif videoid != stored_videoid:
+            False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update,dash.no_update,dash.no_update
+        ,dash.no_update,dash.no_update)
+
+    elif triggered_id == "cities_edit.value":
+        if city_name_edit:
+            center= cities[cities['City Name'] == city_name_edit]['CityCenter'].iloc[0]
+            lat, lon =map(float, center.split(",")) 
+            map_center_city = {'center': [lat, lon], 'zoom': 10}               
+            return (
+                False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update,dash.no_update,dash.no_update
+            ,map_center_city,dash.no_update)
+        else:
+            map_center_city= {'center': [41.9028, 12.4964], 'zoom': 10}                 
+            return (
+                False, dash.no_update, dash.no_update,"","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update,dash.no_update,dash.no_update
+            ,map_center_city,dash.no_update)
+                        
+    elif triggered_id == 'link_url_edit.value':
+        if linkedit:
+            try: 
+                valid_url_watch = is_valid_url(linkedit)
+                if valid_url_watch:
+                    picked_video = valid_url_watch
+                    return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (picked_video,False,False,dash.no_update,"",dash.no_update,dash.no_update,dash.no_update)
+            except ValueError as e:
+                # If any validation fails, catch and show the error message
+                error_input = html.Div(f"Incorrect Link Format", style={"color": "red"})   
+                return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,error_input,dash.no_update,dash.no_update,dash.no_update)
+        else:
+            return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + ("",False,False,dash.no_update,"",dash.no_update,dash.no_update,dash.no_update)
+
+    elif triggered_id == 'coordinates_input_edit.value':
+        if coord_edit:
+            try: 
+                lat_str, lon_str = coord_edit.split(",")
+                # 2) … and 2) both must convert to float
+                lat, lon = float(lat_str), float(lon_str)
+                marker = dl.Marker(position=[lat, lon],
+                                children=[dl.Popup(coord_edit)],
+                                id='city-mark')
+                viewport = {'center': [lat, lon], 'zoom': 14}
+                return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,"",viewport,[marker])
+            except ValueError as e:
+                # If any validation fails, catch and show the error message
+                error_input_cor = html.Div(f"Incorrect Coordinates Format", style={"color": "red"})
+                return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,error_input_cor,dash.no_update,dash.no_update)
+        else:
+            center= cities[cities['City Name'] == city_name_edit]['CityCenter'].iloc[0]
+            lat, lon =map(float, center.split(",")) 
+            map_center_city = {'center': [lat, lon], 'zoom': 10}      
+            return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,"",map_center_city,[])
+
+
+
+    elif triggered_id == 'place_map_ed.n_clicks':
+        try:
+            lat_str, lon_str = coord_edit.split(",")
+            # 2) … and 2) both must convert to float
+            lat, lon = float(lat_str), float(lon_str)
+            if not coord_edit or not city_name_edit:
+                raise ValueError('Please insert both coordinates & city name!')
+            
+            polygodid = cities[cities['City Name'] == city_name_edit]['PolygonID'].values[0]
+            request = drive_service.files().get_media(fileId=polygodid)
+            polygon_bytes = request.execute()
+
+            try:
+                if isinstance(polygon_bytes, bytes):
+                    polygon_data = json.loads(polygon_bytes.decode('utf-8'))
+                else:
+                    polygon_data = json.loads(polygon_bytes)
+            except Exception:
+                polygon_data = []
+            poly_coords = [tuple(coord) for coord in polygon_data]
+   
+
+            if is_inside_any(lat, lon, poly_coords):
+                validation_msg = html.Div(
+                    [
+                        html.H5("✅ Success", style={"color": "green"}),
+                        html.P(f"{coord_edit} is in the Polygon", style={"color": "green", "font-weight": "bold"})
+                    ]
+                )
+            else:
+                validation_msg = html.Div(
+                    [
+                        html.H5("❌ Warning", style={"color": "red"}),
+                        html.P(f"{coord_edit} is out of the Polygon", style={"color": "red", "font-weight": "bold"})
+                    ]
+                )
+
+            marker = dl.Marker(
+                position=[lat, lon],
+                children=[dl.Popup(coord_edit)],
+                id='city-mark'
+            )
+
+            viewport = {'center': [lat, lon], 'zoom': 14}
+            return (True, validation_msg,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,"",viewport,[marker])
+
+
+        except ValueError as e:
+            error_message = html.Div(
+                [
+                    html.H5("⚠️ Validation Error", style={"color": "red"}),
+                    html.P(str(e), style={"color": "black"})
+                ]
+            )
+            return (True, validation_msg,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,"",viewport,[marker])
+
+
+
+    elif videoid != stored_videoid and videoid:
         row = df_city_edit[df_city_edit['record_id'] == videoid]
         if not row.empty:
             time_st = row['Start Time'].values[0]
@@ -1891,6 +2049,15 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
             hh_end, mm_end, ss_end = parse_time_string(time_end)
 
             value_check=['on'] if row['Duration'].iloc[0] == 'Full Video' else []
+            
+            coord_outputs = row['Coordinates'].values[0]
+            lat_str_l, lon_str_l = coord_outputs.split(",")
+            lat, lon = float(lat_str_l), float(lon_str_l)
+            marker = dl.Marker(position=[lat, lon],
+                            children=[dl.Popup(coord_outputs)],
+                            id='city-mark')
+            viewport = {'center': [lat, lon], 'zoom': 14}
+            
             return (
                 False, dash.no_update, videoid,
                 row['Source'].values[0],
@@ -1909,13 +2076,14 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
                 row['Distortions'].values[0],
                 row['Analyst'].values[0],
                 row['Comments'].values[0] if row['Comments'].values[0] else "",
-                row['Links'].values[0],False,False,value_check
+                row['Links'].values[0],False,False,value_check,dash.no_update,dash.no_update,viewport,[marker]
             )
       
-        return (False, dash.no_update,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update)
+        return (False, dash.no_update,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",
+                False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)
     
     elif triggered_id == 'update.n_clicks':   
-        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (True,False,dash.no_update)
+        return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (True,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)
 
     elif triggered_id =='confirm-yes.n_clicks' :
         try:
@@ -1982,7 +2150,11 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
                             info_dict = ydl.extract_info(valid_url_update, download=False)
                             video_name_edit = info_dict.get('title', 'No title found')
                     else:
-                        raise ValueError("Video title not found - maybe not a matching source?")     
+                        raise ValueError("Video title not found - maybe not a matching source?")  
+                    
+                video_name_edit = df_city_edit[
+                    df_city_edit['Links'] == valid_url_update]['OG File Name'].values[0]
+   
                 
             row = df_city_edit[df_city_edit['record_id'] == videoid]    
             row_number_up = row.index[0] + 2  # Adjust for 1-based index and header row
@@ -2006,9 +2178,12 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
                     error_window_update,       # show our new error
                     stored_videoid,            # keep current selection
                     *([dash.no_update] * 21),  # no other fields change
-                    False,False,dash.no_update                      # disable Confirm button
+                    False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update                     # disable Confirm button
                 )
-            
+            center= cities[cities['City Name'] == city_name_edit]['CityCenter'].iloc[0]
+            lat, lon =map(float, center.split(",")) 
+            map_center_city = {'center': [lat, lon], 'zoom': 10} 
+                            
             result_window_update = html.Div([
                 html.H1('Video Updated Successfully!'),
                 html.Br(),
@@ -2038,7 +2213,8 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
             ])
             
             checkbox_ed =[]  
-            return True,result_window_update,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,checkbox_ed       
+            return (True,result_window_update,"Select a video id", "","","",0,0,0,0,0,0,"","","",
+                    "","","","","","","","","",False,False,checkbox_ed,dash.no_update,dash.no_update,map_center_city,[])      
         except ValueError as e:
             # If any validation fails, catch and show the error message
             error_message = html.Div(
@@ -2047,17 +2223,20 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
                     html.P(str(e), style={"color": "black"})
                 ]
             )
-            return(True, error_message,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)
+            return(True, error_message,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)
     
     elif triggered_id == 'delete.n_clicks':
         if stored_videoid:
-            return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,True,dash.no_update)
+            return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,True,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)
         else:
             raise ValueError("No  selected to remove!")
         
     elif triggered_id == 'delete_btn.n_clicks':
         if delete_password == "delete":
             try:
+                center= cities[cities['City Name'] == city_name_edit]['CityCenter'].iloc[0]
+                lat, lon =map(float, center.split(",")) 
+                map_center_city = {'center': [lat, lon], 'zoom': 10} 
                 remove_record(videoid, df_city_edit)
             except Exception as e:
                 # Build a Dash error window if the Sheets update fails
@@ -2071,17 +2250,18 @@ def edit_mode(city_name_edit, videoid, sourceedit, linkedit, coord_edit, tod_edi
                     error_window_update,       # show our new error
                     stored_videoid,            # keep current selection
                     *([dash.no_update] * 21),  # no other fields change
-                    False,False,dash.no_update                      # disable Confirm button
+                    False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update                     # disable Confirm button
                 )
             
             result_removal = f"{videoid} has successfully removed !"
-            return True,result_removal,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",False,False,dash.no_update        
+            return (True,result_removal,"Select a video id", "","","",0,0,0,0,0,0,"","","","","","","","","","","","",
+        False,False,dash.no_update,dash.no_update,dash.no_update,map_center_city,[])        
         else:
             result_removal = "Incorrect Password, please try again!"
-            return (True,result_removal,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)        
+            return (True,result_removal,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)        
 
     # No videoid selected, just update options
-    return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update)
+    return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 21 + (False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update)
 
 
 

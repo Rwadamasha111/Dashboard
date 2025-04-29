@@ -148,7 +148,7 @@ button_style4 = {
     "textAlign": "center",
     "boxShadow": "0 8px 16px rgba(0, 0, 0, 0.2)",
     "position": "relative",
-    "top": "300px"
+    "top": "350px"
 }
 
 rec_num = {
@@ -156,7 +156,7 @@ rec_num = {
     "fontSize": "18px",
     "textAlign": "center",
     "position": "relative",
-    "top": "150px"       
+    "top": "285px"       
 }
 
 save_link_btn = {
@@ -797,7 +797,7 @@ def insert_tab_layout():
                             html.Br(),
                             html.Br(),
                             html.Br(),                            
-                            html.H4("Map",style=heading_style2),
+                            html.H4(children=f"Map",style=heading_style2),
                             dl.Map(
                                 id='map',
                                 children=[
@@ -1282,6 +1282,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
 
             end_time_check = parse_input_time(end_time)
             og_dur_check = parse_duration(og_dur)
+            
             if end_time_check > og_dur_check:
                 raise ValueError ("Annotation time exceeding original video duration!")
 
@@ -1291,14 +1292,18 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             cut_id = generate_unique_random_id(city_name,df_all,valid_url)
             video_id = '_'.join(cut_id.split('_')[:3])
             
-            parts = og_dur.split(":")
-            if parts[0] == "0":
-                formatted_duration = ":".join(parts[1:])
+            if og_dur:
+                parts = og_dur.split(":")
+                if parts[0] == "0":
+                    formatted_duration = ":".join(parts[1:])
+                else:
+                    formatted_duration = og_dur     
             else:
-                formatted_duration = og_dur     
+                raise ValueError("Please insert original video duration")    
                        
             latest_index = int(df_all['Index'].iloc[-1]) + 1
 
+            
             row_data =[latest_index,cut_id,video_id,country_name,city_name,linkurl,video_name,valid_coordinates,analyst,sources,formatted_duration,start_time,end_time,dur_time,
                        tod,terrain,weather,vq,tilt,distancebuild,occlusion,distortions,
                        logos,comments,formatted_datetime]
@@ -1334,7 +1339,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 html.Ul([
                     html.Li(f"City: {city_name}"),
                     html.Li(f"City: {country_name}"),
-                    html.Li(f"Video id: {video_id}"),
+                    html.Li(f"Cut_id: {cut_id}"),
                     html.Li(f"Video Link: {valid_url}"),
                     html.Li(f"Video Name: {video_name}"),
                     html.Li(f"Video Source: {sources}"),                    
@@ -1614,6 +1619,7 @@ df_city_edit['Quarter'] = df_city_edit['TimeStamp'].apply(assign_relative_quarte
 
 # Example: sum by quarter
 quarters = df_city_edit['Quarter'].nunique()
+timeframes = ["", "Year", "1/2 Year", "3 Months", "Month", "Week", "Day", ""]
 
 def edit_tab_layout():
      return html.Div(
@@ -1663,25 +1669,28 @@ def edit_tab_layout():
                                 className="form-control",
                                 placeholder = "Select a filter"
                             ),   
-                            html.Br(),                         
+                            html.Br(),
+                            dbc.Label("Filter Annotation Time by Last (All Time - Hour):"),
+                            html.Div(
+                                dcc.RangeSlider(
+                                    id='timeframe_slider',
+                                    min=0,
+                                    max=len(timeframes) - 1,
+                                    step=1,
+                                    value=[0, len(timeframes) - 1],
+                                    marks={i: label for i, label in enumerate(timeframes)},
+                                    tooltip={"always_visible": True, "placement": "bottom"}
+                                ),
+                                style={"width": "550px", "margin-bottom": "20px"}  # Increase width as needed
+                            ),
+                            html.Br(),  
+                            html.Br(),                       
                             dbc.Label("Choose a sub filter:"),
                             dcc.Dropdown(
                                 id='cities_edit',
                                 options=[{'label': k, 'value': k} for k in cities_list],
                                 value="",
                                 className="form-control"
-                            ),
-                            html.Br(),
-                            dbc.Label("Filter by Annotation Time (by quarters)"),
-                            dcc.RangeSlider(
-                                id='quarter-slider',
-                                min=0,
-                                max=quarters,
-                                step=1,
-                                value=[0, quarters],
-                                updatemode='mouseup',
-                                marks={},
-                                tooltip={"always_visible": True, "placement": "bottom"}
                             ),
                             html.Br(),
                         html.Div([
@@ -1823,7 +1832,7 @@ def edit_tab_layout():
                             html.Br(),
                             html.Br(),
                             html.Br(),      
-                            html.H4("Map",style=heading_style2),
+                            html.H4("Map",id="map_title",style=heading_style2),
                             dl.Map(
                                 id='map_edit',
                                 children=[
@@ -2031,22 +2040,84 @@ def calculate_duration_edit(start_hours, start_minutes, start_seconds,
 
     
 @app.callback(
-    Output("cities_edit","options"),
-    Input("filters_list","value")
+    Output("cities_edit", "options"),
+    Input("filters_list", "value"),
+    Input("timeframe_slider", "value")
 )
+def load_sub_filter(selected_filter, slider_val):
 
-def load_sub_filter(selected_filter):
-    if selected_filter == 'City':
-        sub_filter_options =  cities_list
-    elif selected_filter == 'Record ID':
-        sub_filter_options =  df_city_edit['record_id'].unique()  
-    elif selected_filter == 'Analyst':
-        sub_filter_options =  df_city_edit['Analyst'].unique()   
-    elif selected_filter == 'Annotation Time':
-         sub_filter_options = time_constants 
+    # ── 1.  make TimeStamp tz-aware & in UTC ───────────────────────
+    ts = pd.to_datetime(df_city_edit["TimeStamp"], errors="coerce")
+
+    if ts.dt.tz is None:                                             # tz-naïve
+        ts = (
+            ts.dt.tz_localize(
+                "Asia/Jerusalem",
+                ambiguous="NaT",          # DST fall-back ambiguities → NaT
+                nonexistent="shift_forward",  # spring-forward gaps → next valid
+            )
+            .dt.tz_convert("UTC")
+        )
+    else:                                                            # tz-aware
+        ts = ts.dt.tz_convert("UTC")                                 # → UTC
+
+    df_city_edit["TimeStamp"] = ts
+
+    # ── 2.  map slider indices → look-back windows ─────────────────
+    lookback = {
+        7: pd.Timedelta(hours=1),        # last hour
+        6: pd.Timedelta(days=1),         # last day
+        5: pd.Timedelta(days=7),         # last week
+        4: pd.Timedelta(days=30),        # ~ last month
+        3: pd.Timedelta(days=90),        # ~ last 3 months
+        2: pd.Timedelta(days=183),       # ~ last 6 months
+        1: pd.Timedelta(days=365),       # last year
+        0: None,                         # “all time”
+    }
+
+    low_idx, high_idx = slider_val
+
+    # ── 3a.  if the slider is untouched (full range 0→7), don't filter at all
+    if (low_idx, high_idx) == (0, 7):
+        window_df = df_city_edit
     else:
-        sub_filter_options =[]
-    return sub_filter_options
+        # ── 3b.  otherwise compute cutoffs and slice as before ──────
+        now = pd.Timestamp.now(tz="UTC")
+
+        # newer bound (right-hand knob)
+        start_cutoff = (
+            now - lookback[high_idx]
+            if lookback[high_idx] is not None
+            else pd.Timestamp.min.tz_localize("UTC")
+        )
+
+        # older bound (left-hand knob)
+        end_cutoff = (
+            now - lookback[low_idx]
+            if lookback[low_idx] is not None
+            else now
+        )
+
+        # swap if crossed
+        if start_cutoff > end_cutoff:
+            start_cutoff, end_cutoff = end_cutoff, start_cutoff
+
+        window_df = df_city_edit.loc[
+            df_city_edit["TimeStamp"].between(start_cutoff, end_cutoff)
+        ]
+
+
+    # ── 4.  return the unique values for the chosen sub-filter ─────
+    if selected_filter == "City":
+        opts = sorted(window_df["City"].dropna().unique())
+    elif selected_filter == "Record ID":
+        opts = sorted(window_df["record_id"].dropna().unique())
+    elif selected_filter == "Analyst":
+        opts = sorted(window_df["Analyst"].dropna().unique())
+    else:
+        opts = []       # invalid selector → empty list
+
+    return opts
 
 @app.callback(
     Output("videoid_edit","options"),
@@ -2056,21 +2127,22 @@ def load_sub_filter(selected_filter):
 
     Input("cities_edit",  "value"),
     Input("update_ids",   "n_clicks"),
-    Input("quarter-slider","value"),
+
          # <-- NEW
     prevent_initial_call=True
 )            
 
-def loading_videoid_options(selected_input,update_ids,quarter_slider):
+def loading_videoid_options(selected_input,update_ids):
     sheetid_edit = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-    sheetrange_edit = 'All_Cities!A1:Y50000'
+    sheetrange_edit = 'All_Cities!A1:Y500000'
     df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
-    df_city_edit['TimeStamp'] = pd.to_datetime(df_city_edit['TimeStamp'])  # Convert to datetime
-    df_city_edit['Quarter'] = df_city_edit['TimeStamp'].apply(assign_relative_quarter)
+    
     rec_num=""
-    q2_df = df_city_edit[
-        (df_city_edit['Quarter'] >= quarter_slider[0]) & (df_city_edit['Quarter'] <= quarter_slider[1])
-    ].copy()
+    
+    df_city_edit['TimeStamp'] = pd.to_datetime(df_city_edit['TimeStamp'])  # Convert to datetime
+    
+
+    q2_df = df_city_edit.copy()
     q2_df['base'] = q2_df['Cut_ID'].str.extract(r'^(.*)_v\d+$')[0]
 
     
@@ -2092,6 +2164,7 @@ def loading_videoid_options(selected_input,update_ids,quarter_slider):
 @app.callback(
     Output("cut_version","options"),
     Output("cut_version","value"),
+
     Input("videoid_edit","value"),
     State("latest_df",   "data"),
 )
@@ -2104,10 +2177,12 @@ def load_versions(cut,df):
         cuts_df = v_df[v_df['Cut_ID'].str.contains(cut)].copy()
         cuts_df['version'] = cuts_df['Cut_ID'].str.extract(r'_(v\d+)$')[0]
         version_options = cuts_df['version'].unique()
+
         ver_val = ""
     else:
         version_options =[]
         ver_val = ""
+
     return version_options,ver_val
 
 

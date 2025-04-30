@@ -506,7 +506,6 @@ country_list = cities['Country'].unique()
 
 
 
-
 source_list = df_city_edit['Source'].unique()
 time_list = df_city_edit['Time of the day'].unique()
 terrain_list = df_city_edit['Terrain'].unique()
@@ -644,7 +643,8 @@ def insert_tab_layout():
                     'comments':""
                 }),
                 dcc.Store('links_table_store',data=None),
-                dcc.Store('coords_poly',data={'Coordinates': [], 'In/Out': []}),
+
+
                     html.H1("Geo Annotation Form", style=heading_style),
                     html.Hr(),
                     dbc.Row([
@@ -742,6 +742,11 @@ def insert_tab_layout():
                             
                         ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '10px'}),
                             html.Div(id="dur_error", style={"color": "red"}),
+                        html.Div([
+                            html.Label("Full Video Size:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                            dcc.Input(id='og_size', disabled=True, style={'width': '100px', 'fontWeight': 'bold'}),
+                            
+                        ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '10px'}),
                         ], width=2),
                         dbc.Col([dbc.Button("Save for later", id="save_later", color="success", n_clicks=0,style=save_link_btn),
                         dbc.Button("Check", id="place_map", color="success", n_clicks=0,style=place_map_btn),
@@ -995,7 +1000,9 @@ def calculate_duration(start_hours, start_minutes, start_seconds,
     Output('og_duration', 'value'),
     Output('dur_error','children'),
     Output("link_title","value"),
-    Output("link_title","disabled")
+    Output("link_title","disabled"),
+    Output("og_size","value"),
+
     ],
     [
         Input('link_url','value')
@@ -1006,11 +1013,11 @@ def calculate_duration(start_hours, start_minutes, start_seconds,
 def check_dur(link):
     try:
         if not link:
-            return "", "", "", True
+            return "", "", "", True,""
 
         valid_url = is_valid_url(link)
         if not valid_url:
-            return 'NA', "Invalid Link", "", True
+            return 'NA', "Invalid Link", "", True,""
 
         # Now try extracting
         ydl_opts = {}
@@ -1020,14 +1027,22 @@ def check_dur(link):
                 og_dur = info_dict.get('duration', 0)
                 video_og_dur = str(datetime.timedelta(seconds=og_dur))
                 video_name = info_dict.get('title', 'No title found')
-                return video_og_dur, "", video_name, True
+                video_size = info_dict.get('filesize') or info_dict.get('filesize_approx')
+                if video_size:
+                    vid_size = f"{video_size / (1024 * 1024):.2f} MB"
+                    print(f"Video size: {video_size / (1024 * 1024):.2f} MB")
+                else:
+                    print("Video size not available")
+
+                return (video_og_dur, "", video_name, True,vid_size)
             except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError, Exception) as e:
                 # Handle yt-dlp specific errors
-                return "", "Failed to extract video info. Please insert manually.", "Title Not Found! Please insert manually!", False
+                return ("", "Failed to extract video info. Please insert manually.", "Title Not Found! Please insert manually!", False,
+                "")
 
     except Exception as e:
         # Handle any other unexpected errors
-        return "", "Unexpected error occurred. Please try again.", "Title Not Found!", False
+        return ("", "Unexpected error occurred. Please try again.", "Title Not Found!", False,"")
     
 @app.callback (
     [
@@ -1094,6 +1109,7 @@ def check_dur(link):
     Input('save_later','n_clicks'),
     Input('links_table','selected_rows'),
     Input('place_map','n_clicks'),
+  
          
              
 ],
@@ -1104,7 +1120,9 @@ def check_dur(link):
     State('links_table_store','data'),
     State('checkbox','value'),
     State('og_duration', 'value'),
-    State("link_title","value")
+    State("link_title","value"),
+    State("og_size","value"),
+
  
 ]
 
@@ -1113,10 +1131,11 @@ def check_dur(link):
 def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_input,sources,hourst,minst,secst,
                 hourend,minend,secend,tod,weather,vq,tilt,distancebuild,occlusion,terrain,logos,distortions,
                 analyst,comments,save_later_btn,selected_link,place_on_map,
-                defaults,dur_input,links_table,checkbox,og_dur,title_vid):
+                defaults,dur_input,links_table,checkbox,og_dur,title_vid,og_size_val):
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'] if ctx.triggered else None
     
+
 
     if links_table is not None and (
             (isinstance(links_table, pd.DataFrame) and not links_table.empty)  # DataFrame
@@ -1126,9 +1145,10 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
     else:
         links_data = []
         
+        
     if triggered_id == 'link_url.value':
         if linkurl:
-            try: 
+            try:                      
                 valid_url_watch = is_valid_url(linkurl)
                 if valid_url_watch:
                     picked_video = valid_url_watch
@@ -1214,6 +1234,12 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             sheetidall= '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
             sheetrangeall = 'All_Cities!A1:Y500000'
             df_all = city_load_data(sheetidall,sheetrangeall)
+            
+            
+            cut_sheet_id = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+            cut_range = 'Cuts_DB!A1:Q500000'
+            cut_db = city_load_data(cut_sheet_id,cut_range)
+            
             matched_rows = df_all[df_all['Links'] == valid_url]
             
             if checkbox is None or len(checkbox) == 0:    
@@ -1296,21 +1322,32 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 parts = og_dur.split(":")
                 if parts[0] == "0":
                     formatted_duration = ":".join(parts[1:])
+                    minutes, seconds = map(int, formatted_duration.split(":"))
+                    formatted_dur = f"{minutes}:{seconds:02d}"
                 else:
-                    formatted_duration = og_dur     
+                    formatted_dur = og_dur     
             else:
                 raise ValueError("Please insert original video duration")    
                        
             latest_index = int(df_all['Index'].iloc[-1]) + 1
 
             
-            row_data =[latest_index,cut_id,video_id,country_name,city_name,linkurl,video_name,valid_coordinates,analyst,sources,formatted_duration,start_time,end_time,dur_time,
+            row_data =[latest_index,cut_id,video_id,country_name,city_name,linkurl,video_name,valid_coordinates,analyst,sources,formatted_dur,start_time,end_time,dur_time,
                        tod,terrain,weather,vq,tilt,distancebuild,occlusion,distortions,
                        logos,comments,formatted_datetime]
 
             sheetid =  '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
             sheetrange  ='All_Cities!A1:Y50000'
             append_row_to_gsheet(sheetid,sheetrange,row_data)
+            
+            cut_sheet = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+            cut_ranges = 'Cuts_DB!A1:Q500000'
+            
+            latest_cut_index = int(cut_db['Index'].iloc[-1]) + 1
+            cuts_row_data =[latest_cut_index,cut_id,country_name,city_name,linkurl,video_name,'TBD',start_time,end_time,dur_time,'TBD',
+                            'TBD','FALSE','og_user','TBD',og_size_val,formatted_dur]
+            append_row_to_gsheet(cut_sheet,cut_ranges,cuts_row_data)
+            
             
             lat, lon = map(float, valid_coordinates.split(","))   
             marker = dl.Marker(
@@ -1574,6 +1611,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update, dash.no_update, dash.no_update, map_center_city,
                 [],dash.no_update,dash.no_update,dash.no_update,dash.no_update )  # Rest of outputs unchanged
         else:
+
             return (False, dash.no_update,
                     dash.no_update,
                     dash.no_update,
@@ -2082,14 +2120,15 @@ def load_sub_filter(selected_filter, slider_val):
         window_df = df_city_edit
     else:
         # ── 3b.  otherwise compute cutoffs and slice as before ──────
-        now = pd.Timestamp.now(tz="UTC")
+        now = pd.Timestamp.now(tz="Asia/Jerusalem")
 
         # newer bound (right-hand knob)
         start_cutoff = (
             now - lookback[high_idx]
             if lookback[high_idx] is not None
-            else pd.Timestamp.min.tz_localize("UTC")
+            else pd.Timestamp.min.tz_localize(tz="Asia/Jerusalem")
         )
+        print(start_cutoff)
 
         # older bound (left-hand knob)
         end_cutoff = (
@@ -2098,6 +2137,7 @@ def load_sub_filter(selected_filter, slider_val):
             else now
         )
 
+        print(end_cutoff)
         # swap if crossed
         if start_cutoff > end_cutoff:
             start_cutoff, end_cutoff = end_cutoff, start_cutoff

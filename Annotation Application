@@ -499,7 +499,7 @@ df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
 
 global cities
 sheetid  = '1Svc-2iK5wvHFicmBZHoOxqf5iajdg57ntilgR_cM3ZE'
-sheetrange ='Cities!A1:F300'
+sheetrange ='Cities!A1:J300'
 cities = city_load_data(sheetid,sheetrange)
 cities_list = cities['City Name'].unique()
 country_list = cities['Country'].unique()

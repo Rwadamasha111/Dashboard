@@ -310,8 +310,8 @@ def update_row(spreadsheet_id, row_number, values):
     except Exception as e:
         print(f"Error updating range {range_name}: {e}")
 
-def remove_record(id, df, service):
-    spreadid = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
+def remove_record(id, df, service,spreadid):
+    spreadid = spreadid
     try:
         # Load data
         if df.empty or "Cut_ID" not in df.columns or id not in df["Cut_ID"].values:
@@ -476,7 +476,34 @@ def is_inside_any(lat, lon, polygons):
             return True
     return False
     
+def update_cell(spreadsheet_id, row_number, columns_values_dict, sheet_name="Cuts_DB"):
+    if " " in sheet_name or any(c in sheet_name for c in "!@#$%^&*()[]{}<>?/\\|"):
+        escaped_sheet_name = f"'{sheet_name}'"
+    else:
+        escaped_sheet_name = sheet_name
 
+    for column_range, values in columns_values_dict.items():
+        range_name = f"{escaped_sheet_name}!{column_range}{row_number}"
+        
+        # Ensure values is a list (even if one value)
+        if not isinstance(values, list):
+            values = [values]
+        
+        # If multiple columns (e.g., "K:L"), values should be list matching the number of columns
+        body = {'values': [values]}  # 2D array: one row
+        
+        print(f"Updating {range_name} with values {values}")
+        
+        try:
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            print(f"Successfully updated {range_name}")
+        except Exception as e:
+            print(f"Error updating {range_name}: {e}")
 
 def city_load_data(sheetid,sheetrange):
     SHEET_ID = sheetid
@@ -503,6 +530,11 @@ sheetrange ='Cities!A1:J300'
 cities = city_load_data(sheetid,sheetrange)
 cities_list = cities['City Name'].unique()
 country_list = cities['Country'].unique()
+
+global cuts_db
+cut_sheet_id = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+cut_range = 'Cuts_DB!A1:Q500000'
+cuts_db = city_load_data(cut_sheet_id,cut_range)
 
 
 
@@ -1641,22 +1673,7 @@ filters_list= ['City','Record ID','Analyst']
 # Find the first timestamp
 df_city_edit['TimeStamp'] = pd.to_datetime(df_city_edit['TimeStamp'], errors='coerce')
 
-# 2. Drop rows with bad timestamps if needed
-df_city_edit = df_city_edit.dropna(subset=['TimeStamp'])
 
-# 3. Get the earliest timestamp
-first_timestamp = df_city_edit['TimeStamp'].min()
-
-# Create a function to assign relative quarters
-def assign_relative_quarter(ts):
-    diff = ts - first_timestamp
-    months = diff.days // 30  # Approximate months
-    quarter = (months // 3) + 1
-    return quarter
-df_city_edit['Quarter'] = df_city_edit['TimeStamp'].apply(assign_relative_quarter)
-
-# Example: sum by quarter
-quarters = df_city_edit['Quarter'].nunique()
 timeframes = ["", "Year", "1/2 Year", "3 Months", "Month", "Week", "Day", ""]
 
 def edit_tab_layout():
@@ -1690,7 +1707,7 @@ def edit_tab_layout():
                 }),
                 dcc.Store(id="stored-videoid", data=None),
                 dcc.Store(id='latest_df',data=None),
-                dcc.Store(id="refresh_flag"),
+                dcc.Store(id='latest_cut',data=None),
 
                     html.H1("Edit Mode", style=heading_style),
                     html.Hr(),
@@ -1811,6 +1828,17 @@ def edit_tab_layout():
                             html.Br(),
                             dbc.Label("Duration:  "),
                             dcc.Input(id='output-duration_edit', disabled=True, style={'margin-top': '30px', 'margin-left': '30px','font-weight': 'bold'}),
+                            html.Div([
+                                html.Label("Full Video Duration:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                dcc.Input(id='og_dur_ed', disabled=False, style={'width': '100px', 'fontWeight': 'bold'}),
+                                
+                            ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '10px'}),
+                            html.Div([
+                                html.Label("Full Video Size:", style={'fontWeight': 'bold', 'marginRight': '10px'}),
+                                dcc.Input(id='og_size_ed', disabled=True, style={'width': '100px', 'fontWeight': 'bold'}),
+                                
+                            ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '10px'}),                        
+
                         ], width=2),
                         dbc.Col([
                             html.Div([dbc.Label("Records Number:"),
@@ -2077,92 +2105,67 @@ def calculate_duration_edit(start_hours, start_minutes, start_seconds,
 
 
     
+from datetime import datetime, timedelta
+import pandas as pd
+
 @app.callback(
     Output("cities_edit", "options"),
-    Input("filters_list", "value"),
-    Input("timeframe_slider", "value")
+    Input("timeframe_slider", "value"),
+    Input("filters_list", "value")
 )
-def load_sub_filter(selected_filter, slider_val):
-
-    # ── 1.  make TimeStamp tz-aware & in UTC ───────────────────────
-    ts = pd.to_datetime(df_city_edit["TimeStamp"], errors="coerce")
-
-    if ts.dt.tz is None:                                             # tz-naïve
-        ts = (
-            ts.dt.tz_localize(
-                "Asia/Jerusalem",
-                ambiguous="NaT",          # DST fall-back ambiguities → NaT
-                nonexistent="shift_forward",  # spring-forward gaps → next valid
-            )
-            .dt.tz_convert("UTC")
-        )
-    else:                                                            # tz-aware
-        ts = ts.dt.tz_convert("UTC")                                 # → UTC
-
-    df_city_edit["TimeStamp"] = ts
-
-    # ── 2.  map slider indices → look-back windows ─────────────────
-    lookback = {
-        7: pd.Timedelta(hours=1),        # last hour
-        6: pd.Timedelta(days=1),         # last day
-        5: pd.Timedelta(days=7),         # last week
-        4: pd.Timedelta(days=30),        # ~ last month
-        3: pd.Timedelta(days=90),        # ~ last 3 months
-        2: pd.Timedelta(days=183),       # ~ last 6 months
-        1: pd.Timedelta(days=365),       # last year
-        0: None,                         # “all time”
+def load_sub_filter(slider_val, selected_filter):
+    # Assume slider_val is a list/tuple like [start_days_ago, end_days_ago]
+    low_idx, high_idx = slider_val
+    index_to_days = {
+        7: 0,      # last hour? or 0 days? adjust as needed
+        6: 1,      # last day
+        5: 7,      # last week
+        4: 30,     # last month
+        3: 90,     # last 3 months
+        2: 183,    # last 6 months
+        1: 365,    # last year
+        0: 1000    # "all time" or large number
     }
 
-    low_idx, high_idx = slider_val
+    now = pd.Timestamp.now(tz="Asia/Jerusalem")
 
-    # ── 3a.  if the slider is untouched (full range 0→7), don't filter at all
-    if (low_idx, high_idx) == (0, 7):
-        window_df = df_city_edit
-    else:
-        # ── 3b.  otherwise compute cutoffs and slice as before ──────
-        now = pd.Timestamp.now(tz="Asia/Jerusalem")
-
-        # newer bound (right-hand knob)
-        start_cutoff = (
-            now - lookback[high_idx]
-            if lookback[high_idx] is not None
-            else pd.Timestamp.min.tz_localize(tz="Asia/Jerusalem")
-        )
-        print(start_cutoff)
-
-        # older bound (left-hand knob)
-        end_cutoff = (
-            now - lookback[low_idx]
-            if lookback[low_idx] is not None
-            else now
-        )
-
-        print(end_cutoff)
-        # swap if crossed
-        if start_cutoff > end_cutoff:
-            start_cutoff, end_cutoff = end_cutoff, start_cutoff
-
-        window_df = df_city_edit.loc[
-            df_city_edit["TimeStamp"].between(start_cutoff, end_cutoff)
-        ]
+    # map low_idx and high_idx separately
+    start_cutoff = now - timedelta(days=index_to_days[high_idx])
+    end_cutoff = now - timedelta(days=index_to_days[low_idx])
 
 
-    # ── 4.  return the unique values for the chosen sub-filter ─────
+    # Ensure timestamps are tz-aware
+    if df_city_edit['TimeStamp'].dt.tz is None:
+        df_city_edit['TimeStamp'] = df_city_edit['TimeStamp'].dt.tz_localize("Asia/Jerusalem")
+
+    # Ensure start <= end
+    if start_cutoff > end_cutoff:
+        start_cutoff, end_cutoff = end_cutoff, start_cutoff
+
+    # Filter using BETWEEN start and end
+    filtered_df = df_city_edit[
+        (df_city_edit['TimeStamp'] >= start_cutoff) &
+        (df_city_edit['TimeStamp'] <= end_cutoff)
+    ]
+
+    # Return unique values based on selected filter
     if selected_filter == "City":
-        opts = sorted(window_df["City"].dropna().unique())
+        opts = sorted(filtered_df["City"].dropna().unique())
     elif selected_filter == "Record ID":
-        opts = sorted(window_df["record_id"].dropna().unique())
+        opts = sorted(filtered_df["record_id"].dropna().unique())
     elif selected_filter == "Analyst":
-        opts = sorted(window_df["Analyst"].dropna().unique())
+        opts = sorted(filtered_df["Analyst"].dropna().unique())
     else:
-        opts = []       # invalid selector → empty list
+        opts = []
 
     return opts
+
 
 @app.callback(
     Output("videoid_edit","options"),
     Output("videoid_edit","value"),
     Output("latest_df",   "data"),
+    Output("latest_cut",   "data"),
     Output("rec_num","value"),
 
     Input("cities_edit",  "value"),
@@ -2176,7 +2179,9 @@ def loading_videoid_options(selected_input,update_ids):
     sheetid_edit = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
     sheetrange_edit = 'All_Cities!A1:Y500000'
     df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
-    
+    cut_sheet_id = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+    cut_range = 'Cuts_DB!A1:Q500000'
+    cuts_db = city_load_data(cut_sheet_id,cut_range)
     rec_num=""
     
     df_city_edit['TimeStamp'] = pd.to_datetime(df_city_edit['TimeStamp'])  # Convert to datetime
@@ -2199,7 +2204,7 @@ def loading_videoid_options(selected_input,update_ids):
     else:
         video_id_options = []
 
-    return (video_id_options,"Select a cut id",q2_df.to_dict('records'),rec_num)
+    return (video_id_options,"Select a cut id",q2_df.to_dict('records'),cuts_db.to_dict('records'),rec_num)
 
 @app.callback(
     Output("cut_version","options"),
@@ -2207,6 +2212,7 @@ def loading_videoid_options(selected_input,update_ids):
 
     Input("videoid_edit","value"),
     State("latest_df",   "data"),
+    
 )
 
 
@@ -2225,7 +2231,59 @@ def load_versions(cut,df):
 
     return version_options,ver_val
 
+@app.callback(
+    Output('og_size_ed','value'),
+    Output('og_dur_ed','value'),
+    Input('link_url_edit','value'),
+    State("videoid_edit","value"),
+    State("cut_version","value"),
+    State('latest_df','data'),
+    State("latest_cut",   "data")
+)
 
+
+def cal_size (link,cut,ver,latest_df,latest_cut):
+    from datetime import timedelta
+
+    df = pd.DataFrame(latest_df)
+    cuts = pd.DataFrame(latest_cut)
+
+
+    if link:
+        cut_vers = f"{cut}_{ver}"
+        match_link = df[df['Cut_ID']==cut_vers]['Links'].values[0]
+        if not match_link:
+            ydl_opts = {}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+
+                info_dict = ydl.extract_info(link, download=False)
+                video_size = info_dict.get('filesize') or info_dict.get('filesize_approx')
+                og_dur = info_dict.get('duration', 0)
+                print(video_size,og_dur)
+                if video_size > 0 and og_dur > 0:
+                    vid_size = f"{video_size / (1024 * 1024):.2f} MB"
+                    video_og_dur = str(timedelta(seconds=og_dur))
+
+                    print(vid_size,video_og_dur)
+                else:
+                    vid_size = 0
+                    video_og_dur = 0
+                    print(vid_size,video_og_dur)
+                return vid_size,video_og_dur
+        else:
+            match_dur = cuts[cuts['Cut_ID']==cut_vers]['Video Duration_OG'].values[0]
+            match_size = cuts[cuts['Cut_ID']==cut_vers]['Video_Size_OG'].values[0]
+            if match_dur and not match_size:
+                return None, match_dur
+            elif not match_dur and match_size:
+                return match_size,None
+            elif not match_dur and not match_size:
+                return None, None
+            else:
+                return match_size,match_dur
+    else:
+        return None, None
+    
 @app.callback ([
         Output('confirmation-modal_edit','is_open'),
         Output('confirmation-message_edit','children'),
@@ -2302,14 +2360,17 @@ State('input-minutes_edit','value'),
 State('input-seconds_edit','value'),
 State('input-hours_end_edit','value'),
 State('input-minutes_end_edit','value'),
-State('input-seconds_end_edit','value'),    
+State('input-seconds_end_edit','value'),
+State('og_size_ed','value'),
+State("latest_cut",   "data")
+    
 ],
                
 )
 def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, coord_edit, tod_edit, weather_edit, vq_edit, tilt_edit, distance_edit,
               occlusion_edit, terrain_edit, logos_edit, distortions_edit, analyst_edit, comments_edit, update,confirm_yes,confirm_no,
               delete,delete_btn, check_btn,duration_edit, defaults_edit,stored_videoid,latest_df,update_confirmation,delete_password,checkbox_ed,
-              hours_st_edit, minute_st_edit, sec_st_edit,hours_end_edit, min_end_edit, sec_end_edit,):
+              hours_st_edit, minute_st_edit, sec_st_edit,hours_end_edit, min_end_edit, sec_end_edit,sized,latest_cut):
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'] if ctx.triggered else None
     df_city_edit = pd.DataFrame(latest_df)
@@ -2321,7 +2382,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
     else:
         video_ver = ""
         city_val = ""
-    print(video_ver)
+
     
     if not video_version :
         # Reset all fields to defaults
@@ -2337,6 +2398,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                 valid_url_watch = is_valid_url(linkedit)
                 if valid_url_watch:
                     picked_video = valid_url_watch
+                    
                     return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (picked_video,False,False,dash.no_update,"",dash.no_update,dash.no_update,dash.no_update)
             except ValueError as e:
                 # If any validation fails, catch and show the error message
@@ -2541,7 +2603,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                         raise ValueError("Video title not found - maybe not a matching source?")  
                     
                 video_name_edit = df_city_edit[
-                    df_city_edit['Links'] == valid_url_update]['OG File Name'].values[0]
+                    df_city_edit['Links'] == valid_url_update]['Title'].values[0]
    
             video_og_dur = df_city_edit[
                     df_city_edit['Links'] == valid_url_update
@@ -2555,7 +2617,8 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                     df_city_edit['Links'] == valid_url_update
                 ]['Country'].values[0] 
             
-            time_d=(datetime.datetime.now())
+            time_d = datetime.now()
+
             formatted_datetime = time_d.strftime("%Y-%m-%d %H:%M:%S")                 
             
             match = re.match(r'^(.*)_v\d+$', video_ver)
@@ -2592,6 +2655,55 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                 sheetid =  '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
                 sheetrange  ='All_Cities!A1:Y50000'
                 append_row_to_gsheet(sheetid,sheetrange,values_update)
+           
+                cut_sheet = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+                cut_ranges = 'Cuts_DB!A1:Q500000'
+                
+                cut_db_ed = city_load_data(cut_sheet,cut_ranges)
+                
+                latest_cut_index = int(cut_db_ed['Index'].iloc[-1]) + 1
+
+                og_dured = df_city_edit[df_city_edit['Cut_ID'] == video_ver]['Original Duration'].values[0]
+                if not og_dured:
+                    raise ValueError("Please insert original video duration")
+
+                # Parse all the components as ints
+                components = list(map(int, og_dured.split(":")))
+
+                # Compute total seconds
+                if len(components) == 3:
+                    hours, mins, secs = components
+                elif len(components) == 2:
+                    mins, secs = components
+                    hours = 0
+                else:
+                    raise ValueError(
+                        "Original duration must be in H:MM:SS or MM:SS format"
+                    )
+
+                total_seconds = hours*3600 + mins*60 + secs
+
+                # Re‐format as M:SS
+                minutes = total_seconds // 60
+                seconds = total_seconds % 60
+                formatted_dured = f"{minutes}:{seconds:02d}"
+
+                
+                cuts_row_data =[latest_cut_index,new_cut_v,updated_country,city_val,valid_url_update,video_name_edit,'TBD',start_time_edit,end_time_edit,dur_time,'TBD',
+                                'TBD','FALSE','og_user','TBD',sized,formatted_dured]
+                
+                append_row_to_gsheet(cut_sheet,cut_ranges,cuts_row_data)
+                
+                cut_sheet_ids = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+                analyst = df_city_edit[df_city_edit['Cut_ID']==video_ver]['Analyst'].values[0]
+                print(analyst)
+                columns_values_dict={
+                "M": "TRUE",
+                "N": analyst
+            }
+                idx_cut = cut_db_ed.index[cut_db_ed['Cut_ID']==video_ver][0]
+                update_cell(cut_sheet_ids, idx_cut + 2, columns_values_dict) 
+                        
             except Exception as e:
                 
                 # Build a Dash error window if the Sheets update fails
@@ -2664,8 +2776,35 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
             try:
                 center= cities[cities['City Name'] == city_val]['CityCenter'].iloc[0]
                 lat, lon =map(float, center.split(",")) 
-                map_center_city = {'center': [lat, lon], 'zoom': 10} 
-                remove_record(video_ver, df_city_edit,service)
+                map_center_city = {'center': [lat, lon], 'zoom': 10}
+                
+                
+                cut_sheet = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
+
+                cut_db_ed = pd.DataFrame(latest_cut)
+                
+                sheetid_edit = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
+                sheetrange_edit = 'All_Cities!A1:Y50000'
+                df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
+
+                
+                remove_record(video_ver, df_city_edit,service,sheetid_edit)
+                remove_record(video_ver, cut_db_ed,service,cut_sheet)
+
+                columns_values_dict={
+                "M": "FALSE",
+                "N": "og_user"
+            }
+                cuts_df = cut_db_ed[cut_db_ed['Cut_ID'].str.contains(video_cut)]
+                prev_v = cuts_df[cuts_df["Ignored"] == 'TRUE']['Cut_ID'].iloc[-1]
+                if not prev_v:
+                    prev_v = video_ver
+                else:   
+                    prev_v = prev_v 
+                    idx_cut = cut_db_ed.index[cut_db_ed['Cut_ID']==prev_v][0]
+
+                    update_cell(cut_sheet, idx_cut + 2, columns_values_dict) 
+                
             except Exception as e:
                 # Build a Dash error window if the Sheets update fails
                 error_window_update = html.Div([

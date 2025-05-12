@@ -61,15 +61,10 @@ from google.oauth2 import service_account
 #        os.utime(file, (now, now))  # update access and modified times
 #    else:
 #        continue
-
-SERVICE_ACCOUNT_FILE = r"C:\Users\roy\OneDrive\Desktop\ASR JSONS\Geo_Anlysis_Data\arabic-transcription-435113-c8120df00a35.json"
+SERVICE_ACCOUNT_FILE = r"C:\Users\rwad\Downloads\arabic-transcription-435113-c8120df00a35 (1).json"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 credentials = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build('sheets', 'v4', credentials=credentials)
-
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-app.title = "Annotation Form"
-
 # Define scopes
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly', 
           'https://www.googleapis.com/auth/drive']
@@ -91,6 +86,18 @@ creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FI
 
 # Build the Drive API service
 drive_service = build('drive', 'v3', credentials=creds)
+import psycopg2
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+app.title = "Annotation Form"
+# --- DB CONNECTION FUNCTION ---
+def get_db_connection():
+    return psycopg2.connect(
+        host="127.0.0.1",
+        port="5432",
+        user="postgres",
+        password="postgres",
+        dbname="postgres"
+    )
 
 
 button_style1 = {
@@ -276,83 +283,125 @@ update_modal_style = {"textAlign": "center"}
 
 
 
-def append_row_to_gsheet(sheetid,sheetrange,row_data):
+def append_row_to_sql(row_data, table_name):
     """
-    Appends a single row (list) to the Google Sheet.
-    row_data: list of values corresponding to the headers order.
-    headers: list of column headers.
+    Inserts a row into the SQL table (city_table).
+    row_data: list of values in exact order matching columns.
     """
-    # Use append method to add a new row to the bottom
-    request = service.spreadsheets().values().append(
-        spreadsheetId=sheetid,
-        range=sheetrange,
-        valueInputOption='RAW',
-        insertDataOption='INSERT_ROWS',
-        body={'values': [row_data]}
-    )
-    request.execute()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cut_table_columns = [
+    'Index',
+    'Cut_ID',
+    'Country',
+    'City',
+    'Links',
+    'Title',
+    'Annotated File Name',
+    'Cut_Start',
+    'Cut_Fnish',
+    'Cut_Duration',
+    'Cut_Size',
+    'GCP_Bucket_URL',
+    'Ignored',
+    'Validated_By',
+    'Upload_Time',
+    'Video_Size_OG',
+    'Video Duration_OG'
+]
+    if table_name == 'geo' : 
+
+     sql = """
+        INSERT INTO geo (
+    "Index", "Cut_ID", "record_id", "Country", "City", "Links", "Title", "Coordinates",
+    "Analyst", "Source", "Original Duration", "Start Time", "Finish Time",
+    "Duration", "Time of the day", "Terrain", "Weather", "Video quality",
+    "Camera tilt", "Distance from building", "Occluded", "Distortions",
+    "Logos and text", "Comments", "TimeStamp"
+)
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s,%s,%s
+        )
     
-def update_row(spreadsheet_id, row_number, values):
-    range_name = f"City!D{row_number}:U{row_number}"
-    body = {'values': [values]}  # Make sure 'values' is a list of values for the row
+    """
+    elif table_name == "geo_cut":
+        sql =f"""
+INSERT INTO geo_cut ({', '.join([f'"{col}"' for col in cut_table_columns])})
+VALUES ({', '.join(['%s'] * len(cut_table_columns))})
+"""
+    try:
+        cur.execute(sql, row_data)
+        conn.commit()
+        print("✅ Row inserted into database.")
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error inserting row: {e}")
+    finally:
+        cur.close()
+        conn.close()
 
-    print(f"Updating row {row_number}")
-    print(f"Values for D:U: {values}")
+def update_row_in_sql(cut_id, values, table_n):
+    """
+    Updates a row in geo table identified by Cut_ID.
+    values: list of values in the exact order of columns (EXCEPT Cut_ID and Index).
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    update_columns = [
+        'record_id', 'Country', 'City', 'Links', 'Title', 'Coordinates',
+        'Analyst', 'Source', 'Original Duration', 'Start Time', 'Finish Time',
+        'Duration', 'Time of the day', 'Terrain', 'Weather', 'Video quality',
+        'Camera tilt', 'Distance from building', 'Occluded', 'Distortions',
+        'Logos and text', 'Comments', 'TimeStamp'
+    ]
+
+    # Dynamically build the SET part
+    set_clause = ", ".join([f'"{col}" = %s' for col in update_columns])
+    if table_n == "geo":
+        sql = f"""
+        UPDATE geo
+        SET {set_clause}
+        WHERE "Cut_ID" = %s
+        """
+    
 
     try:
-        service.spreadsheets().values().update(
-            spreadsheetId=spreadsheet_id,
-            range=range_name,
-            valueInputOption='RAW',
-            body=body
-        ).execute()
-        print(f"Successfully updated range: {range_name}")
+        # values: list of 23 items (excluding Index, Cut_ID)
+        cur.execute(sql, values + [cut_id])
+        conn.commit()
+        print(f"✅ Row with Cut_ID {cut_id} updated in database.")
     except Exception as e:
-        print(f"Error updating range {range_name}: {e}")
+        conn.rollback()
+        print(f"❌ Error updating row: {e}")
+    finally:
+        cur.close()
+        conn.close()
 
-def remove_record(id, df, service,spreadid):
-    spreadid = spreadid
+
+
+def remove_record_sql(cut_id):
+    """
+    Deletes a row from the SQL table by Cut_ID.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    sql = """DELETE FROM geo WHERE "Cut_ID" = %s"""
     try:
-        # Load data
-        if df.empty or "Cut_ID" not in df.columns or id not in df["Cut_ID"].values:
-            return False
-
-        # Find the index of the row to remove
-        row_index = df.index[df["Cut_ID"] == id].tolist()[0]
-        sheet_row_number = row_index + 2  # +2 for header and 0-indexing adjustment
-
-        # --- NEW: get the real sheetId ---
-        spreadsheet = service.spreadsheets().get(spreadsheetId=spreadid).execute()
-        sheet = spreadsheet['sheets'][0]  # assuming first sheet
-        sheet_id = sheet['properties']['sheetId']
-        # ----------------------------------
-
-        # Prepare the delete request
-        body = {
-            "requests": [
-                {
-                    "deleteDimension": {
-                        "range": {
-                            "sheetId": sheet_id,  # use real sheetId
-                            "dimension": "ROWS",
-                            "startIndex": sheet_row_number - 1,
-                            "endIndex": sheet_row_number
-                        }
-                    }
-                }
-            ]
-        }
-
-        # Execute the deletion
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=spreadid,
-            body=body
-        ).execute()
-
-        return True
+        cur.execute(sql, (cut_id,))
+        conn.commit()
+        print(f"✅ Row with Cut_ID {cut_id} deleted from database.")
     except Exception as e:
-        print(f"Error removing record: {e}")
-        return False
+        conn.rollback()
+        print(f"❌ Error deleting row: {e}")
+    finally:
+        cur.close()
+        conn.close()
   
    
      
@@ -476,65 +525,29 @@ def is_inside_any(lat, lon, polygons):
             return True
     return False
     
-def update_cell(spreadsheet_id, row_number, columns_values_dict, sheet_name="Cuts_DB"):
-    if " " in sheet_name or any(c in sheet_name for c in "!@#$%^&*()[]{}<>?/\\|"):
-        escaped_sheet_name = f"'{sheet_name}'"
-    else:
-        escaped_sheet_name = sheet_name
 
-    for column_range, values in columns_values_dict.items():
-        range_name = f"{escaped_sheet_name}!{column_range}{row_number}"
-        
-        # Ensure values is a list (even if one value)
-        if not isinstance(values, list):
-            values = [values]
-        
-        # If multiple columns (e.g., "K:L"), values should be list matching the number of columns
-        body = {'values': [values]}  # 2D array: one row
-        
-        print(f"Updating {range_name} with values {values}")
-        
-        try:
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=range_name,
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-            print(f"Successfully updated {range_name}")
-        except Exception as e:
-            print(f"Error updating {range_name}: {e}")
 
-def city_load_data(sheetid,sheetrange):
-    SHEET_ID = sheetid
-    RANGE = sheetrange
-    result = sheet.values().get(spreadsheetId=SHEET_ID, range=RANGE).execute()
-    values = result.get('values', [])
-    if values:
-        headers_n = values[0]
-        data_n = values[1:]
-        df_Cities = pd.DataFrame(data_n, columns=headers_n)
-    else:
-        print("No data found for DF.")
-        df_Cities = pd.DataFrame()
-    return df_Cities
+def city_load_data(query):
+    """
+    Runs a SQL query and returns results as a pandas DataFrame.
+    """
+    conn = get_db_connection()
+    try:
+        df = pd.read_sql_query(query, conn)
+    except Exception as e:
+        print(f"❌ Error loading data from SQL: {e}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
+    return df
 
 global df_city_edit
-sheetid_edit = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-sheetrange_edit = 'All_Cities!A1:Y50000'
-df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
-
+df_city_edit = city_load_data("SELECT * FROM geo")
+df_city_edit = df_city_edit.fillna("None")
 global cities
-sheetid  = '1Svc-2iK5wvHFicmBZHoOxqf5iajdg57ntilgR_cM3ZE'
-sheetrange ='Cities!A1:J300'
-cities = city_load_data(sheetid,sheetrange)
-cities_list = cities['City Name'].unique()
-country_list = cities['Country'].unique()
-
-global cuts_db
-cut_sheet_id = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
-cut_range = 'Cuts_DB!A1:Q500000'
-cuts_db = city_load_data(cut_sheet_id,cut_range)
+cities = city_load_data("SELECT * FROM geo_cities")
+cities_list = cities['city_name'].unique()
+country_list = cities['country'].unique()
 
 
 
@@ -561,8 +574,6 @@ def parse_time(t):
         raise ValueError('Bad time format')
     return datetime.timedelta(hours=h, minutes=m, seconds=s)
 
-           
-import random
 
 import random
 
@@ -573,7 +584,7 @@ def generate_unique_random_id(city, df, url):
     existing_prefixes = set(rec_id.split('_', 2)[0] + '_' + rec_id.split('_', 2)[1] + '_' for rec_id in df['Cut_ID'].values)
 
     def create_random_initials():
-        country_name = cities[cities['City Name'] == city]['Country'].values[0].lower()
+        country_name = cities[cities['city_name'] == city]['country'].values[0].lower()
         city_name = city.lower()
 
         # Ensure the names are long enough for sampling
@@ -586,7 +597,7 @@ def generate_unique_random_id(city, df, url):
 
     if df_filtered.empty:
         # Default deterministic initials
-        country_name = cities[cities['City Name'] == city]['Country'].values[0]
+        country_name = cities[cities['city_name'] == city]['country'].values[0]
         init_1 = f"{country_name[:2].lower()}_"
         init_2 = f"{city[:3].lower()}_"
         initials = init_1 + init_2
@@ -1239,7 +1250,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                 dash.no_update , dash.no_update,dash.no_update,dash.no_update,dash.no_update,error_input)
         else:
             if city_name:
-                center= cities[cities['City Name'] == city_name]['CityCenter'].iloc[0]
+                center= cities[cities['city_name'] == city_name]['citycenter'].iloc[0]
                 lat, lon =map(float, center.split(",")) 
                 map_center_city = {'center': [lat, lon], 'zoom': 10}
             else:
@@ -1263,14 +1274,8 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             valid_coordinates = valid_coords(coords_input)
 
 
-            sheetidall= '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-            sheetrangeall = 'All_Cities!A1:Y500000'
-            df_all = city_load_data(sheetidall,sheetrangeall)
-            
-            
-            cut_sheet_id = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
-            cut_range = 'Cuts_DB!A1:Q500000'
-            cut_db = city_load_data(cut_sheet_id,cut_range)
+            df_all = city_load_data("SELECT * FROM geo")
+            cut_db = city_load_data("SELECT * FROM geo_cut")
             
             matched_rows = df_all[df_all['Links'] == valid_url]
             
@@ -1368,17 +1373,14 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
                        tod,terrain,weather,vq,tilt,distancebuild,occlusion,distortions,
                        logos,comments,formatted_datetime]
 
-            sheetid =  '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-            sheetrange  ='All_Cities!A1:Y50000'
-            append_row_to_gsheet(sheetid,sheetrange,row_data)
+            append_row_to_sql(row_data,table_name="geo")
             
-            cut_sheet = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
-            cut_ranges = 'Cuts_DB!A1:Q500000'
+
             
             latest_cut_index = int(cut_db['Index'].iloc[-1]) + 1
             cuts_row_data =[latest_cut_index,cut_id,country_name,city_name,linkurl,video_name,'TBD',start_time,end_time,dur_time,'TBD',
                             'TBD','FALSE','og_user','TBD',og_size_val,formatted_dur]
-            append_row_to_gsheet(cut_sheet,cut_ranges,cuts_row_data)
+            append_row_to_sql(cuts_row_data, table_name="geo_cut")
             
             
             lat, lon = map(float, valid_coordinates.split(","))   
@@ -1542,7 +1544,7 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
             if not validated_coor or not city_name:
                 raise ValueError('Please insert both coordinates & city name!')
             
-            polygodid = cities[cities['City Name'] == city_name]['PolygonID'].values[0]
+            polygodid = cities[cities['city_name'] == city_name]['PolygonID'].values[0]
             request = drive_service.files().get_media(fileId=polygodid)
             polygon_bytes = request.execute()
 
@@ -1612,9 +1614,9 @@ def validations(insertbtn, city_name,city_options,country_name, linkurl, coords_
         # Update Country based on City selected
         if triggered_id == 'cities.value':
             if city_name:
-                country_match = cities[cities['City Name'] == city_name]['Country']
+                country_match = cities[cities['city_name'] == city_name]['country']
                 country_val = country_match.iloc[0] if not country_match.empty else ''
-                center= cities[cities['City Name'] == city_name]['CityCenter'].iloc[0]
+                center= cities[cities['city_name'] == city_name]['citycenter'].iloc[0]
                 lat, lon =map(float, center.split(",")) 
                 map_center_city = {'center': [lat, lon], 'zoom': 10}         
             else:
@@ -1673,7 +1675,22 @@ filters_list= ['City','Record ID','Analyst']
 # Find the first timestamp
 df_city_edit['TimeStamp'] = pd.to_datetime(df_city_edit['TimeStamp'], errors='coerce')
 
+# 2. Drop rows with bad timestamps if needed
+df_city_edit = df_city_edit.dropna(subset=['TimeStamp'])
 
+# 3. Get the earliest timestamp
+first_timestamp = df_city_edit['TimeStamp'].min()
+
+# Create a function to assign relative quarters
+def assign_relative_quarter(ts):
+    diff = ts - first_timestamp
+    months = diff.days // 30  # Approximate months
+    quarter = (months // 3) + 1
+    return quarter
+df_city_edit['Quarter'] = df_city_edit['TimeStamp'].apply(assign_relative_quarter)
+
+# Example: sum by quarter
+quarters = df_city_edit['Quarter'].nunique()
 timeframes = ["", "Year", "1/2 Year", "3 Months", "Month", "Week", "Day", ""]
 
 def edit_tab_layout():
@@ -1977,7 +1994,34 @@ def edit_tab_layout():
                         "justifyContent": "center",
                         "marginBottom": "-50px",
                     }
-                ),       
+                ),
+                
+                html.Div([
+                    html.Br(),
+                    html.Div([
+                        html.H2("To Full Dashboard", style={"textAlign": "center"}),  # added centered H2
+                        html.A(
+                            html.Img(
+                                src="/assets/Full_Dashboard.png",
+                                alt="To The Full Dashboard",  # added alt
+                                style={
+                                    'width': '500px',
+                                    'border': '1px solid black'
+                                }
+                            ),
+                            href='http://data-team-dashboard:8000/',
+                            target='_blank'  # opens link in new tab
+                        )
+                    ])
+                ],
+                style={
+                    "display": "flex",
+                    "justifyContent": "right",
+                    "gap": "70px",
+                    "marginTop": "120px"
+                })
+
+  
                     ],width=4), 
                     html.Br(),
                     html.Div(
@@ -2105,9 +2149,6 @@ def calculate_duration_edit(start_hours, start_minutes, start_seconds,
 
 
     
-from datetime import datetime, timedelta
-import pandas as pd
-
 @app.callback(
     Output("cities_edit", "options"),
     Input("timeframe_slider", "value"),
@@ -2160,7 +2201,6 @@ def load_sub_filter(slider_val, selected_filter):
 
     return opts
 
-
 @app.callback(
     Output("videoid_edit","options"),
     Output("videoid_edit","value"),
@@ -2176,17 +2216,9 @@ def load_sub_filter(slider_val, selected_filter):
 )            
 
 def loading_videoid_options(selected_input,update_ids):
-    sheetid_edit = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-    sheetrange_edit = 'All_Cities!A1:Y500000'
-    df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
-    cut_sheet_id = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
-    cut_range = 'Cuts_DB!A1:Q500000'
-    cuts_db = city_load_data(cut_sheet_id,cut_range)
+
     rec_num=""
     
-    df_city_edit['TimeStamp'] = pd.to_datetime(df_city_edit['TimeStamp'])  # Convert to datetime
-    
-
     q2_df = df_city_edit.copy()
     q2_df['base'] = q2_df['Cut_ID'].str.extract(r'^(.*)_v\d+$')[0]
 
@@ -2204,7 +2236,7 @@ def loading_videoid_options(selected_input,update_ids):
     else:
         video_id_options = []
 
-    return (video_id_options,"Select a cut id",q2_df.to_dict('records'),cuts_db.to_dict('records'),rec_num)
+    return (video_id_options,"Select a cut id",q2_df.to_dict('records'),city_load_data("SELECT * FROM geo_cut").to_dict('records'),rec_num)
 
 @app.callback(
     Output("cut_version","options"),
@@ -2212,7 +2244,6 @@ def loading_videoid_options(selected_input,update_ids):
 
     Input("videoid_edit","value"),
     State("latest_df",   "data"),
-    
 )
 
 
@@ -2360,10 +2391,9 @@ State('input-minutes_edit','value'),
 State('input-seconds_edit','value'),
 State('input-hours_end_edit','value'),
 State('input-minutes_end_edit','value'),
-State('input-seconds_end_edit','value'),
+State('input-seconds_end_edit','value'), 
 State('og_size_ed','value'),
-State("latest_cut",   "data")
-    
+State("latest_cut",   "data")   
 ],
                
 )
@@ -2382,7 +2412,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
     else:
         video_ver = ""
         city_val = ""
-
+    print(video_ver)
     
     if not video_version :
         # Reset all fields to defaults
@@ -2398,7 +2428,6 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                 valid_url_watch = is_valid_url(linkedit)
                 if valid_url_watch:
                     picked_video = valid_url_watch
-                    
                     return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (picked_video,False,False,dash.no_update,"",dash.no_update,dash.no_update,dash.no_update)
             except ValueError as e:
                 # If any validation fails, catch and show the error message
@@ -2423,7 +2452,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                 error_input_cor = html.Div(f"Incorrect Coordinates Format", style={"color": "red"})
                 return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,error_input_cor,dash.no_update,dash.no_update)
         else:
-            center= cities[cities['City Name'] == city_name_edit]['CityCenter'].iloc[0]
+            center= cities[cities['city_name'] == city_name_edit]['citycenter'].iloc[0]
             lat, lon =map(float, center.split(",")) 
             map_center_city = {'center': [lat, lon], 'zoom': 10}      
             return (False, dash.no_update,stored_videoid) + (dash.no_update,) * 20 + (dash.no_update,False,False,dash.no_update,dash.no_update,"",map_center_city,[])
@@ -2438,7 +2467,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
             if not coord_edit or not city_name_edit:
                 raise ValueError('Please insert both coordinates & city name!')
             
-            polygodid = cities[cities['City Name'] == city_name_edit]['PolygonID'].values[0]
+            polygodid = cities[cities['city_name'] == city_name_edit]['PolygonID'].values[0]
             request = drive_service.files().get_media(fileId=polygodid)
             polygon_bytes = request.execute()
 
@@ -2617,8 +2646,7 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                     df_city_edit['Links'] == valid_url_update
                 ]['Country'].values[0] 
             
-            time_d = datetime.now()
-
+            time_d=(datetime.datetime.now())
             formatted_datetime = time_d.strftime("%Y-%m-%d %H:%M:%S")                 
             
             match = re.match(r'^(.*)_v\d+$', video_ver)
@@ -2652,14 +2680,64 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
 
             
             try:
-                sheetid =  '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-                sheetrange  ='All_Cities!A1:Y50000'
-                append_row_to_gsheet(sheetid,sheetrange,values_update)
-           
-                cut_sheet = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
-                cut_ranges = 'Cuts_DB!A1:Q500000'
+                df_city_edit = city_load_data("SELECT * FROM geo")
                 
-                cut_db_ed = city_load_data(cut_sheet,cut_ranges)
+                
+                append_row_to_sql(values_update, table_name = "geo")
+                # --- insert the new version into geo_cut ---
+                cut_db_ed = city_load_data("SELECT * FROM geo_cut")
+                latest_cut_index = int(cut_db_ed['Index'].iloc[-1]) + 1
+
+                geo_cut_row = [
+                    latest_cut_index,        # Index
+                    new_cut_v,               # Cut_ID
+                    updated_country,         # Country
+                    city_val,                # City
+                    valid_url_update,        # Links
+                    video_name_edit,         # Title
+                    'TBD',                   # Annotated File Name
+                    start_time_edit,         # Cut_Start
+                    end_time_edit,           # Cut_Finish
+                    dur_time,                # Cut_Duration
+                    'TBD',                   # Cut_Size
+                    'TBD',                   # GCP_Bucket_URL
+                    'FALSE',                 # Ignored (new version stays active)
+                    analyst_edit,            # Validated_By
+                    formatted_datetime,      # Upload_Time
+                    sized,              # Video_Size_OG
+                    video_og_dur                     # Video Duration_OG
+                ]
+                append_row_to_sql(geo_cut_row, table_name="geo_cut")
+
+                # --- mark all previous versions as ignored ---
+                conn = get_db_connection()
+                cur = conn.cursor()
+
+                cur.execute(
+    '''
+    UPDATE geo_cut
+       SET "Ignored" = TRUE
+     WHERE "Cut_ID" != %s
+       AND "Cut_ID" LIKE %s
+    ''',
+    (new_cut_v, f"{cleaned_cut}_v%")
+)
+                cur.execute(
+    '''
+    UPDATE geo_cut
+       SET "Validated_By" = %s
+     WHERE "Cut_ID" LIKE %s
+       AND "Cut_ID" != %s
+    ''',
+    (analyst_edit,new_cut_v, cleaned_cut)
+)
+
+
+                conn.commit()
+                cur.close()
+                conn.close()
+
+                
                 
                 latest_cut_index = int(cut_db_ed['Index'].iloc[-1]) + 1
 
@@ -2689,12 +2767,9 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                 formatted_dured = f"{minutes}:{seconds:02d}"
 
                 
-                cuts_row_data =[latest_cut_index,new_cut_v,updated_country,city_val,valid_url_update,video_name_edit,'TBD',start_time_edit,end_time_edit,dur_time,'TBD',
-                                'TBD','FALSE','og_user','TBD',sized,formatted_dured]
+                                
+            
                 
-                append_row_to_gsheet(cut_sheet,cut_ranges,cuts_row_data)
-                
-                cut_sheet_ids = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
                 analyst = df_city_edit[df_city_edit['Cut_ID']==video_ver]['Analyst'].values[0]
                 print(analyst)
                 columns_values_dict={
@@ -2702,15 +2777,16 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                 "N": analyst
             }
                 idx_cut = cut_db_ed.index[cut_db_ed['Cut_ID']==video_ver][0]
-                update_cell(cut_sheet_ids, idx_cut + 2, columns_values_dict) 
-                        
-            except Exception as e:
                 
-                # Build a Dash error window if the Sheets update fails
+            #Add here updating the row for the previous version with  the values in columns_values_dict
+
+            except Exception as e:
                 error_window_update = html.Div([
-                    html.H5("⚠️ Update Failed", style={"color": "red"}),
-                    html.P(f"Could not update the sheet: {e}", style={"color": "black"})
-                ])
+                html.H5("⚠️ Update Failed", style={"color": "red"}),
+                html.P(f"Could not update the database: {e}", style={"color": "black"})
+             ])
+                
+            
                 # Return the error window and leave everything else unchanged
                 return (
                     True,                      # keep the update dialog open
@@ -2720,7 +2796,8 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
                     False,False,dash.no_update,dash.no_update,dash.no_update,dash.no_update,dash.no_update                     # disable Confirm button
                 )
             
-            center= cities[cities['City Name'] == city_val]['CityCenter'].iloc[0]
+            #center= cities[cities['City Name'] == city_val]['CityCenter'].iloc[0]
+            center = "41.8921503,12.4787812"
             lat, lon =map(float, center.split(",")) 
             map_center_city = {'center': [lat, lon], 'zoom': 10} 
                             
@@ -2774,37 +2851,10 @@ def edit_mode(city_name_edit, video_cut, video_version, sourceedit, linkedit, co
     elif triggered_id == 'delete_btn.n_clicks':
         if delete_password == "delete":
             try:
-                center= cities[cities['City Name'] == city_val]['CityCenter'].iloc[0]
+                center= cities[cities['city_name'] == city_val]['citycenter'].iloc[0]
                 lat, lon =map(float, center.split(",")) 
-                map_center_city = {'center': [lat, lon], 'zoom': 10}
-                
-                
-                cut_sheet = '1R-qzDHwVB6f27sGYQvpQTZIoDQbzla59j5jM0rfIm3M'
-
-                cut_db_ed = pd.DataFrame(latest_cut)
-                
-                sheetid_edit = '1aIEe5GLAY-MVfGPj8BVjaiZoJ1z1lWwfXUTBswT576U'
-                sheetrange_edit = 'All_Cities!A1:Y50000'
-                df_city_edit = city_load_data(sheetid_edit, sheetrange_edit)
-
-                
-                remove_record(video_ver, df_city_edit,service,sheetid_edit)
-                remove_record(video_ver, cut_db_ed,service,cut_sheet)
-
-                columns_values_dict={
-                "M": "FALSE",
-                "N": "og_user"
-            }
-                cuts_df = cut_db_ed[cut_db_ed['Cut_ID'].str.contains(video_cut)]
-                prev_v = cuts_df[cuts_df["Ignored"] == 'TRUE']['Cut_ID'].iloc[-1]
-                if not prev_v:
-                    prev_v = video_ver
-                else:   
-                    prev_v = prev_v 
-                    idx_cut = cut_db_ed.index[cut_db_ed['Cut_ID']==prev_v][0]
-
-                    update_cell(cut_sheet, idx_cut + 2, columns_values_dict) 
-                
+                map_center_city = {'center': [lat, lon], 'zoom': 10} 
+                remove_record_sql(video_ver)
             except Exception as e:
                 # Build a Dash error window if the Sheets update fails
                 error_window_update = html.Div([
@@ -2861,4 +2911,4 @@ app.layout = html.Div(
 )                 
              
 if __name__ == "__main__":
-    app.run(host='100.118.47.56', port=8051, debug=True)
+    app.run(host='100.84.182.85', port=8050, debug=True)
